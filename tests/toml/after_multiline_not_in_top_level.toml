@@ -1,0 +1,18 @@
+#--{
+#--    "a": {
+#--        "b": "3",
+#          oop
+#--        "c": "e",
+#--    },
+#--}
+
+[a]
+b='3'
+
+
+
+
+# the reason why this top-level config value is 'e' is because aofj fowjeifo
+# wjif oj fjwjof wejif ewojijifoe wajiowe jaiojiofwea joi ewfjojfewijo ojfe
+# ajoi jfio oweaji wefjiawefjiweajj wefjoe fwajewajiojowojwifjj fijjiwjoieoaw
+c='e'

@@ -1,8 +1,10 @@
 [package]
-name = "black-dwarf"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+name = 'black-dwarf'
+version = '0.1.0'
+edition = '2021'
 
 [dependencies]
+indexmap = '1.9.2'
+
+[dev-dependencies]
+diff = '0.1'

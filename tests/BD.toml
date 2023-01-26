@@ -1,0 +1,74 @@
+#--{
+#--    "a": "b",
+#--    "c": [
+#--        "a",
+#--        "",
+#--        "what",
+#--    ],
+#--    "d": {
+#--        "hehe": [
+#--            "dingle",
+#--        ],
+#--    },
+#--    "file-groups": {
+#--        "common": [
+#--            "michael.c",
+#--            "tomlinson.c",
+#--        ],
+#--        "binary": {
+#--            "groups": [
+#--                "common",
+#--            ],
+#--            "files": [
+#--                "main.c",
+#--            ],
+#--        },
+#--        "library": {
+#--            "groups": [
+#--                "common",
+#--            ],
+#--            "files": [
+#--                "lib.c",
+#--            ],
+#--        },
+#--    },
+#--    "targets": {
+#--        "mt": [
+#--            "binary",
+#--        ],
+#--        "libmt": {
+#--            "groups": [
+#--                "library",
+#--            ],
+#--            "files": [
+#--                "bobby-hill.c",
+#--            ],
+#--        },
+#--    },
+#--}
+
+a = 'b'
+c = ['a', '', 'what',]
+
+d = {hehe = ['dingle'],}
+
+[file-groups]
+common = [
+    'michael.c',
+    'tomlinson.c',
+]
+
+[file-groups.binary]
+groups = ['common']
+files = ['main.c']
+
+[file-groups.library]
+groups = ['common']
+files = ['lib.c']
+
+[targets]
+mt = ['binary']
+
+[targets.libmt]
+groups = ['library']
+files = ['bobby-hill.c']
