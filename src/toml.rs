@@ -12,12 +12,29 @@ pub enum Value<'doc> {
         key_values: IndexMap<&'doc str, Value<'doc>>,
         pos: Pos,
     },
+
     Array {
         values: Vec<Value<'doc>>,
         pos: Pos,
     },
+
     String {
         value: &'doc str,
+        pos: Pos,
+    },
+
+    Integer {
+        value: i64,
+        pos: Pos,
+    },
+
+    Float {
+        value: f64,
+        pos: Pos,
+    },
+
+    Boolean {
+        value: bool,
         pos: Pos,
     },
 }
@@ -35,6 +52,9 @@ impl<'doc> Value<'doc> {
             Value::Array { .. } => "array",
             Value::Table { .. } => "table",
             Value::String { .. } => "string",
+            Value::Integer { .. } => "integer",
+            Value::Float { .. } => "float",
+            Value::Boolean { .. } => "boolean",
         }
     }
 
@@ -43,6 +63,9 @@ impl<'doc> Value<'doc> {
             Value::Array { pos, .. } => *pos,
             Value::Table { pos, .. } => *pos,
             Value::String { pos, .. } => *pos,
+            Value::Integer { pos, .. } => *pos,
+            Value::Float { pos, .. } => *pos,
+            Value::Boolean { pos, .. } => *pos,
         }
     }
 
@@ -114,6 +137,9 @@ impl std::fmt::Debug for Value<'_> {
             Value::Table { key_values, .. } => f.debug_map().entries(key_values.iter()).finish(),
             Value::Array { values, .. } => f.debug_list().entries(values.iter()).finish(),
             Value::String { value, .. } => value.fmt(f),
+            Value::Integer { value, .. } => value.fmt(f),
+            Value::Float { value, .. } => value.fmt(f),
+            Value::Boolean { value, .. } => value.fmt(f),
         }
     }
 }
@@ -187,6 +213,21 @@ fn parse_value<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDw
 
         TokenType::String => Ok(Value::String {
             value: &next.lexeme[1..next.lexeme.len() - 1],
+            pos: next.pos,
+        }),
+
+        TokenType::Integer(value) => Ok(Value::Integer {
+            value,
+            pos: next.pos,
+        }),
+
+        TokenType::Float(value) => Ok(Value::Float {
+            value,
+            pos: next.pos,
+        }),
+
+        TokenType::Boolean(value) => Ok(Value::Boolean {
+            value,
             pos: next.pos,
         }),
 
@@ -335,7 +376,9 @@ pub struct Token<'doc> {
 #[derive(Debug, PartialEq)]
 pub enum TokenType {
     Integer(i64),
-    Double(f64),
+    Float(f64),
+    Boolean(bool),
+
     String,
     Ident,
 
@@ -458,7 +501,11 @@ impl<'a> Scanner<'a> {
             self.advance_char();
         }
 
-        Ok(TokenType::Ident)
+        if let Some(keyword) = into_keyword(self.lexeme()?) {
+            Ok(keyword)
+        } else {
+            Ok(TokenType::Ident)
+        }
     }
 
     fn scan_string(&mut self, quote: u8) -> Result<TokenType, BlackDwarfError> {
@@ -529,7 +576,7 @@ impl<'a> Scanner<'a> {
 
         let value = self.lexeme()?;
         if let Ok(f) = value.parse::<f64>() {
-            Ok(TokenType::Double(f))
+            Ok(TokenType::Float(f))
         } else {
             Err(BlackDwarfError::ParseError {
                 why: format!("invalid number literal '{}'", value),
@@ -620,6 +667,14 @@ fn is_non_identifier(c: u8) -> bool {
         || c == b'='
         || c == b'"'
         || c == b'\''
+}
+
+fn into_keyword(s: &str) -> Option<TokenType> {
+    match s {
+        "true" => Some(TokenType::Boolean(true)),
+        "false" => Some(TokenType::Boolean(false)),
+        _ => None,
+    }
 }
 
 // non-recursive
