@@ -1,4 +1,5 @@
 use crate::toml::Pos;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use toml::Value;
 
@@ -65,10 +66,28 @@ pub struct Target<'doc> {
     pub files: Vec<&'doc str>,
 }
 
+impl<'doc> Target<'doc> {
+    fn new(name: &'doc str) -> Self {
+        Target {
+            name,
+            groups: vec![],
+            files: vec![],
+        }
+    }
+
+    fn groups(name: &'doc str, groups: Vec<&'doc str>) -> Self {
+        Target {
+            name,
+            groups,
+            files: vec![],
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct BlackDwarf<'doc> {
-    pub file_groups: HashMap<&'doc str, FileGroup<'doc>>,
-    pub targets: HashMap<&'doc str, Target<'doc>>,
+    pub file_groups: IndexMap<&'doc str, FileGroup<'doc>>,
+    pub targets: IndexMap<&'doc str, Target<'doc>>,
 }
 
 impl BlackDwarf<'_> {
@@ -103,70 +122,103 @@ impl<'doc, 'value: 'doc> TryFrom<&'value Value<'doc>> for BlackDwarf<'doc> {
     fn try_from(value: &'value Value<'doc>) -> Result<Self, Self::Error> {
         let mut this = BlackDwarf::new();
 
-        if let Some(file_groups) = value.get("file-groups") {
-            if !file_groups.is_table() {
-                return Err(BlackDwarfError::IncorrectType {
-                    type_: file_groups.type_str(),
-                    expected: "table",
-                    where_: file_groups.pos(),
-                });
-            }
+        macro_rules! groups_and_files {
+            ($key:literal, $into:ident, $type_:ident, $as_list:ident) => {
+                if let Some(key) = value.get($key) {
+                    if !key.is_table() {
+                        return Err(BlackDwarfError::IncorrectType {
+                            type_: key.type_str(),
+                            expected: "table",
+                            where_: key.pos(),
+                        });
+                    }
 
-            for (name, contents) in file_groups.iter_kvs() {
-                if let Some(files) = contents.as_list() {
-                    // TODO check files exist
-                    ensure_all_string(files)?;
-                    this.file_groups.insert(
-                        name,
-                        FileGroup::files(
-                            name,
-                            files
-                                .into_iter()
-                                .map(Value::as_str)
-                                .map(Option::unwrap)
-                                .collect(),
-                        ),
-                    );
-                } else if contents.is_table() {
-                    // TODO warn unused kvs
-                    let mut file_group = FileGroup::new(name);
+                    for (name, contents) in key.iter_kvs() {
+                        if let Some(files) = contents.as_list() {
+                            // TODO check files exist
+                            ensure_all_string(files)?;
+                            this.$into.insert(
+                                name,
+                                $type_::$as_list(
+                                    name,
+                                    files
+                                        .into_iter()
+                                        .map(Value::as_str)
+                                        .map(Option::unwrap)
+                                        .collect(),
+                                ),
+                            );
+                        } else if contents.is_table() {
+                            // TODO warn unused kvs
+                            let mut type_ = $type_::new(name);
 
-                    if let Some(groups) = contents.get("groups").and_then(Value::as_list) {
-                        ensure_all_string(groups)?;
+                            if let Some(groups) = contents.get("groups").and_then(Value::as_list) {
+                                ensure_all_string(groups)?;
 
-                        for group in groups {
-                            if !this.has_file_group(group.as_str().unwrap()) {
-                                return Err(BlackDwarfError::UnknownFileGroup {
-                                    what: group.as_str().unwrap().into(),
-                                    where_: group.pos(),
-                                });
+                                for group in groups {
+                                    if !this.has_file_group(group.as_str().unwrap()) {
+                                        return Err(BlackDwarfError::UnknownFileGroup {
+                                            what: group.as_str().unwrap().into(),
+                                            where_: group.pos(),
+                                        });
+                                    }
+                                }
+
+                                type_
+                                    .groups
+                                    .extend(groups.iter().map(Value::as_str).map(Option::unwrap));
                             }
+
+                            if let Some(files) = contents.get("files").and_then(Value::as_list) {
+                                ensure_all_string(files)?;
+                                type_
+                                    .files
+                                    .extend(files.iter().map(Value::as_str).map(Option::unwrap));
+                            }
+
+                            this.$into.insert(name, type_);
+                        } else {
+                            return Err(BlackDwarfError::IncorrectType {
+                                type_: contents.type_str(),
+                                expected: "table or array",
+                                where_: contents.pos(),
+                            });
                         }
-
-                        file_group
-                            .groups
-                            .extend(groups.iter().map(Value::as_str).map(Option::unwrap));
                     }
-
-                    if let Some(files) = contents.get("files").and_then(Value::as_list) {
-                        ensure_all_string(files)?;
-                        file_group
-                            .files
-                            .extend(files.iter().map(Value::as_str).map(Option::unwrap));
-                    }
-
-                    this.file_groups.insert(name, file_group);
-                } else {
-                    return Err(BlackDwarfError::IncorrectType {
-                        type_: contents.type_str(),
-                        expected: "table or array",
-                        where_: contents.pos(),
-                    });
                 }
-            }
+            };
         }
 
+        groups_and_files!("file-groups", file_groups, FileGroup, files);
+        groups_and_files!("targets", targets, Target, groups);
+
         Ok(this)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn check_try_from(name: String, contents: String) {
+    println!("check bd{}", name);
+
+    let expected_debug = contents
+        .lines()
+        .filter(|line| line.starts_with("#=="))
+        .map(|line| &line[3..])
+        .fold(String::new(), |acc, next| acc + next + "\n");
+
+    let toml = toml::parse(&contents).unwrap();
+    let bd = BlackDwarf::try_from(&toml).unwrap();
+    let debug = format!("{:#?}\n", bd);
+
+    if expected_debug != debug {
+        for diff in diff::lines(&expected_debug, &debug) {
+            match diff {
+                diff::Result::Left(l) => println!("-{}", l),
+                diff::Result::Both(l, _) => println!(" {}", l),
+                diff::Result::Right(r) => println!("+{}", r),
+            }
+        }
+        assert_eq!(expected_debug, debug, "different parse result")
     }
 }
 
@@ -176,11 +228,7 @@ fn test_bd() {
     let bd_tests_dir = crate_dir.join("tests");
     let should_fail_dir = bd_tests_dir.join("should_fail");
 
-    toml::for_each_toml_in_dir(&crate_dir, &bd_tests_dir, |name, contents| {
-        println!("check bd {}", name);
-        let toml = toml::parse(&contents).unwrap();
-        let _bd = BlackDwarf::try_from(&toml).unwrap();
-    });
+    toml::for_each_toml_in_dir(&crate_dir, &bd_tests_dir, check_try_from);
 
     toml::for_each_toml_in_dir(&crate_dir, &should_fail_dir, |name, contents| {
         println!("check bd {}, should fail", name);

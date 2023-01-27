@@ -1,0 +1,12 @@
+#--{
+#--    "file-groups": {
+#--        "first": {
+#--            "groups": [
+#--                "who",
+#--            ],
+#--        },
+#--    },
+#--}
+
+[file-groups]
+first = { groups = ['who'] }

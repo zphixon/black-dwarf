@@ -1,0 +1,24 @@
+#--{
+#--    "targets": {
+#--        "bd": {
+#--            "files": [
+#--                "main.c",
+#--            ],
+#--        },
+#--    },
+#--}
+#==BlackDwarf {
+#==    file_groups: {},
+#==    targets: {
+#==        "bd": Target {
+#==            name: "bd",
+#==            groups: [],
+#==            files: [
+#==                "main.c",
+#==            ],
+#==        },
+#==    },
+#==}
+
+[targets.bd]
+files = ['main.c']

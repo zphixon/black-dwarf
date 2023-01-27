@@ -1,0 +1,10 @@
+#--{
+#--    "file-groups": {
+#--        "mikey": [
+#--            3,
+#--        ],
+#--    },
+#--}
+
+[file-groups]
+mikey = [3]

@@ -1,15 +1,4 @@
 #--{
-#--    "a": "b",
-#--    "c": [
-#--        "a",
-#--        "",
-#--        "what",
-#--    ],
-#--    "d": {
-#--        "hehe": [
-#--            "dingle",
-#--        ],
-#--    },
 #--    "file-groups": {
 #--        "common": [
 #--            "michael.c",
@@ -46,11 +35,54 @@
 #--        },
 #--    },
 #--}
-
-a = 'b'
-c = ['a', '', 'what',]
-
-d = {hehe = ['dingle'],}
+#==BlackDwarf {
+#==    file_groups: {
+#==        "common": FileGroup {
+#==            name: "common",
+#==            groups: [],
+#==            files: [
+#==                "michael.c",
+#==                "tomlinson.c",
+#==            ],
+#==        },
+#==        "binary": FileGroup {
+#==            name: "binary",
+#==            groups: [
+#==                "common",
+#==            ],
+#==            files: [
+#==                "main.c",
+#==            ],
+#==        },
+#==        "library": FileGroup {
+#==            name: "library",
+#==            groups: [
+#==                "common",
+#==            ],
+#==            files: [
+#==                "lib.c",
+#==            ],
+#==        },
+#==    },
+#==    targets: {
+#==        "mt": Target {
+#==            name: "mt",
+#==            groups: [
+#==                "binary",
+#==            ],
+#==            files: [],
+#==        },
+#==        "libmt": Target {
+#==            name: "libmt",
+#==            groups: [
+#==                "library",
+#==            ],
+#==            files: [
+#==                "bobby-hill.c",
+#==            ],
+#==        },
+#==    },
+#==}
 
 [file-groups]
 common = [

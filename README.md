@@ -8,6 +8,29 @@ that remains is the cold, hard core.
 
 We're talking about C, of course.
 
+## tests
+
+Tests are structured like so:
+
+- tests/ - Well-formed black dwarf configs
+  - should_fail/ - Incorred black dwarf configs
+  - toml/ - Well-formed TOML parser tests
+    - should_fail/ - Incorrect TOML files
+
+Every test outside of the tests/toml/should_fail/ directory should have lines
+prefixed with `#--` containing the debug print output (`{:#?}`) of the TOML
+`Value`. E.g
+
+```toml
+#--{
+#--    "a": "b",
+#--}
+a = 'b'
+```
+
+Tests in the top level tests/ directory should also have lines prefixed with
+`#==` containing the debug print output of the `BlackDwarf` config.
+
 ---
 
 This is a shitpost
