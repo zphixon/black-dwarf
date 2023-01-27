@@ -168,9 +168,9 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
     while scanner.peek_token(0)?.type_ != TokenType::Eof {
         let peeked = scanner.peek_token(0)?;
         if peeked.type_ == TokenType::Ident {
-            parse_kv(&mut scanner, &mut top_level)?;
+            parse_kv(&mut scanner, &mut top_level, 0)?;
         } else if peeked.type_ == TokenType::LeftBracket {
-            parse_multiline_table(&mut scanner, &mut top_level)?;
+            parse_multiline_table(&mut scanner, &mut top_level, 0)?;
         } else {
             return Err(BlackDwarfError::ParseError {
                 why: format!("expected key or table header, got '{}'", peeked.lexeme),
@@ -182,13 +182,29 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
     Ok(top_level)
 }
 
+macro_rules! ensure {
+    ($depth:ident, $scanner:ident) => {
+        if $depth > 64 {
+            return Err(BlackDwarfError::ParseError {
+                why: format!("recursion limit exceeded"),
+                where_: $scanner.peek_token(0)?.pos,
+            });
+        }
+
+        let $depth = $depth + 1;
+    };
+}
+
 fn parse_kv<'doc>(
     scanner: &mut Scanner<'doc>,
     current: &mut Value<'doc>,
+    depth: usize,
 ) -> Result<(), BlackDwarfError> {
+    ensure!(depth, scanner);
+
     let name = consume(scanner, TokenType::Ident)?;
     let _equals = consume(scanner, TokenType::Equals)?;
-    let value = parse_value(scanner)?;
+    let value = parse_value(scanner, depth)?;
 
     if !current.is_table() {
         return Err(BlackDwarfError::IncorrectType {
@@ -203,13 +219,17 @@ fn parse_kv<'doc>(
     Ok(())
 }
 
-fn parse_value<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDwarfError> {
+fn parse_value<'doc>(
+    scanner: &mut Scanner<'doc>,
+    depth: usize,
+) -> Result<Value<'doc>, BlackDwarfError> {
+    ensure!(depth, scanner);
     let next = scanner.next_token()?;
 
     match next.type_ {
-        TokenType::LeftBracket => parse_array(scanner),
+        TokenType::LeftBracket => parse_array(scanner, depth),
 
-        TokenType::LeftBrace => parse_table(scanner),
+        TokenType::LeftBrace => parse_table(scanner, depth),
 
         TokenType::String => Ok(Value::String {
             value: &next.lexeme[1..next.lexeme.len() - 1],
@@ -240,7 +260,11 @@ fn parse_value<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDw
     }
 }
 
-fn parse_array<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDwarfError> {
+fn parse_array<'doc>(
+    scanner: &mut Scanner<'doc>,
+    depth: usize,
+) -> Result<Value<'doc>, BlackDwarfError> {
+    ensure!(depth, scanner);
     let pos = scanner.peek_token(0)?.pos;
     if scanner.peek_token(0)?.type_ == TokenType::RightBracket {
         let _rb = consume(scanner, TokenType::RightBracket)?;
@@ -250,20 +274,24 @@ fn parse_array<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDw
         });
     }
 
-    let mut values = vec![parse_value(scanner)?];
+    let mut values = vec![parse_value(scanner, depth)?];
     while scanner.peek_token(0)?.type_ == TokenType::Comma && !scanner.is_at_end() {
         let _comma = consume(scanner, TokenType::Comma)?;
         if scanner.peek_token(0)?.type_ == TokenType::RightBracket {
             break;
         }
-        values.push(parse_value(scanner)?);
+        values.push(parse_value(scanner, depth)?);
     }
 
     let _rb = consume(scanner, TokenType::RightBracket)?;
     Ok(Value::Array { values, pos })
 }
 
-fn parse_table<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDwarfError> {
+fn parse_table<'doc>(
+    scanner: &mut Scanner<'doc>,
+    depth: usize,
+) -> Result<Value<'doc>, BlackDwarfError> {
+    ensure!(depth, scanner);
     let pos = scanner.peek_token(0)?.pos;
     if scanner.peek_token(0)?.type_ == TokenType::RightBrace {
         let _rb = consume(scanner, TokenType::RightBrace)?;
@@ -274,13 +302,13 @@ fn parse_table<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDw
     }
 
     let mut key_values = Value::new(pos);
-    parse_kv(scanner, &mut key_values)?;
+    parse_kv(scanner, &mut key_values, depth)?;
     while scanner.peek_token(0)?.type_ == TokenType::Comma && !scanner.is_at_end() {
         let _comma = consume(scanner, TokenType::Comma);
         if scanner.peek_token(0)?.type_ == TokenType::RightBrace {
             break;
         }
-        parse_kv(scanner, &mut key_values)?;
+        parse_kv(scanner, &mut key_values, depth)?;
     }
 
     let _rb = consume(scanner, TokenType::RightBrace)?;
@@ -290,7 +318,9 @@ fn parse_table<'doc>(scanner: &mut Scanner<'doc>) -> Result<Value<'doc>, BlackDw
 fn parse_multiline_table<'doc>(
     scanner: &mut Scanner<'doc>,
     top_level: &mut Value<'doc>,
+    depth: usize,
 ) -> Result<(), BlackDwarfError> {
+    ensure!(depth, scanner);
     let path = parse_path(scanner)?;
 
     let mut current = &mut *top_level;
@@ -311,7 +341,7 @@ fn parse_multiline_table<'doc>(
     }
 
     while scanner.peek_token(0)?.type_ != TokenType::LeftBracket && !scanner.is_at_end() {
-        parse_kv(scanner, current)?;
+        parse_kv(scanner, current, depth)?;
     }
 
     Ok(())
