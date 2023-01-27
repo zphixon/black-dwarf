@@ -1,0 +1,26 @@
+#--{
+#--    "a": {
+#--        "disjoint": "why",
+#--        "b": [
+#--            {
+#--                "wow": "nice",
+#--            },
+#--            {
+#--                "norway": "true",
+#--            },
+#--        ],
+#--        "c": "huh",
+#--    },
+#--}
+
+[a]
+disjoint = 'why'
+
+[[a.b]]
+wow = 'nice'
+
+[[a.b]]
+norway = 'true'
+
+[a]
+c = 'huh'

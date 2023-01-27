@@ -40,9 +40,16 @@ pub enum Value<'doc> {
 }
 
 impl<'doc> Value<'doc> {
-    pub fn new(pos: Pos) -> Self {
+    fn new_table(pos: Pos) -> Self {
         Value::Table {
             key_values: IndexMap::new(),
+            pos,
+        }
+    }
+
+    fn new_array(pos: Pos) -> Self {
+        Value::Array {
+            values: vec![],
             pos,
         }
     }
@@ -129,6 +136,13 @@ impl<'doc> Value<'doc> {
             _ => panic!("called create on non-table"),
         }
     }
+
+    fn append(&mut self, value: Value<'doc>) {
+        match self {
+            Value::Array { values, .. } => values.push(value),
+            _ => panic!("called append on non-array"),
+        }
+    }
 }
 
 impl std::fmt::Debug for Value<'_> {
@@ -164,7 +178,7 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
     let mut scanner = Scanner::new(doc);
     let first = scanner.peek_token(0)?.pos;
 
-    let mut top_level = Value::new(first);
+    let mut top_level = Value::new_table(first);
     while scanner.peek_token(0)?.type_ != TokenType::Eof {
         let peeked = scanner.peek_token(0)?;
         if peeked.type_ == TokenType::Ident {
@@ -301,7 +315,7 @@ fn parse_table<'doc>(
         });
     }
 
-    let mut key_values = Value::new(pos);
+    let mut key_values = Value::new_table(pos);
     parse_kv(scanner, &mut key_values, depth)?;
     while scanner.peek_token(0)?.type_ == TokenType::Comma && !scanner.is_at_end() {
         let _comma = consume(scanner, TokenType::Comma);
@@ -321,40 +335,63 @@ fn parse_multiline_table<'doc>(
     depth: usize,
 ) -> Result<(), BlackDwarfError> {
     ensure!(depth, scanner);
+    let _lb = consume(scanner, TokenType::LeftBracket)?;
+
+    let array_element = scanner.peek_token(0)?.type_ == TokenType::LeftBracket;
+    if array_element {
+        let _lb = consume(scanner, TokenType::LeftBracket)?;
+    }
+
     let path = parse_path(scanner)?;
 
+    let _rb = consume(scanner, TokenType::RightBracket)?;
+    if array_element {
+        let _rb = consume(scanner, TokenType::RightBracket)?;
+    }
+
     let mut current = &mut *top_level;
-    for fragment in path {
+    for (i, fragment) in path.iter().enumerate() {
         if !current.is_table() {
+            // TODO slightly confusing but correct error message if array_element
             return Err(BlackDwarfError::IncorrectType {
                 type_: current.type_str(),
                 expected: "table",
-                where_: current.pos(),
+                where_: fragment.pos,
             });
         }
 
         if !current.contains_key(fragment.lexeme) {
-            current.insert(fragment.lexeme, Value::new(fragment.pos));
+            if i + 1 == path.len() && array_element {
+                current.insert(fragment.lexeme, Value::new_array(fragment.pos));
+            } else {
+                current.insert(fragment.lexeme, Value::new_table(fragment.pos));
+            }
         }
 
         current = current.get_mut(fragment.lexeme).unwrap();
     }
 
-    while scanner.peek_token(0)?.type_ != TokenType::LeftBracket && !scanner.is_at_end() {
-        parse_kv(scanner, current, depth)?;
+    if array_element {
+        let mut table = Value::new_table(scanner.peek_token(0)?.pos);
+        while scanner.peek_token(0)?.type_ != TokenType::LeftBracket && !scanner.is_at_end() {
+            parse_kv(scanner, &mut table, depth)?;
+        }
+        current.append(table);
+    } else {
+        while scanner.peek_token(0)?.type_ != TokenType::LeftBracket && !scanner.is_at_end() {
+            parse_kv(scanner, current, depth)?;
+        }
     }
 
     Ok(())
 }
 
 fn parse_path<'doc>(scanner: &mut Scanner<'doc>) -> Result<Vec<Token<'doc>>, BlackDwarfError> {
-    let _lb = consume(scanner, TokenType::LeftBracket)?;
     let mut names = vec![consume(scanner, TokenType::Ident)?];
     while scanner.peek_token(0)?.type_ != TokenType::RightBracket && !scanner.is_at_end() {
         let _dot = consume(scanner, TokenType::Dot)?;
         names.push(consume(scanner, TokenType::Ident)?);
     }
-    let _rb = consume(scanner, TokenType::RightBracket)?;
     Ok(names)
 }
 
