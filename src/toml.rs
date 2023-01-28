@@ -185,6 +185,8 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
             parse_kv(&mut scanner, &mut top_level, 0)?;
         } else if peeked.type_ == TokenType::LeftBracket {
             parse_multiline_table(&mut scanner, &mut top_level, 0)?;
+        } else if peeked.type_ == TokenType::DoubleLeftBracket {
+            parse_multiline_array_element(&mut scanner, &mut top_level, 0)?;
         } else {
             return Err(BlackDwarfError::ParseError {
                 why: format!("expected key or table header, got '{}'", peeked.lexeme),
@@ -339,18 +341,8 @@ fn parse_multiline_table<'doc>(
 ) -> Result<(), BlackDwarfError> {
     ensure!(depth, scanner);
     let _lb = consume(scanner, TokenType::LeftBracket)?;
-
-    let array_element = scanner.peek_token(0)?.type_ == TokenType::LeftBracket;
-    if array_element {
-        let _lb = consume(scanner, TokenType::LeftBracket)?;
-    }
-
     let path = parse_path(scanner)?;
-
     let _rb = consume(scanner, TokenType::RightBracket)?;
-    if array_element {
-        let _rb = consume(scanner, TokenType::RightBracket)?;
-    }
 
     let mut current = &mut *top_level;
     for (i, fragment) in path.iter().enumerate() {
@@ -364,7 +356,42 @@ fn parse_multiline_table<'doc>(
         }
 
         if !current.contains_key(fragment.lexeme) {
-            if i + 1 == path.len() && array_element {
+            current.insert(fragment.lexeme, Value::new_table(fragment.pos));
+        }
+
+        current = current.get_mut(fragment.lexeme).unwrap();
+    }
+
+    while !scanner.peek_token(0)?.type_.is_bracket() && !scanner.is_at_end() {
+        parse_kv(scanner, current, depth)?;
+    }
+
+    Ok(())
+}
+
+fn parse_multiline_array_element<'doc>(
+    scanner: &mut Scanner<'doc>,
+    top_level: &mut Value<'doc>,
+    depth: usize,
+) -> Result<(), BlackDwarfError> {
+    ensure!(depth, scanner);
+    let _dlb = consume(scanner, TokenType::DoubleLeftBracket)?;
+    let path = parse_path(scanner)?;
+    let _drb = consume(scanner, TokenType::DoubleRightBracket)?;
+
+    let mut current = &mut *top_level;
+    for (i, fragment) in path.iter().enumerate() {
+        if !current.is_table() {
+            // TODO slightly confusing but correct error message if array_element
+            return Err(BlackDwarfError::IncorrectType {
+                type_: current.type_str(),
+                expected: "table",
+                where_: fragment.pos,
+            });
+        }
+
+        if !current.contains_key(fragment.lexeme) {
+            if i + 1 == path.len() {
                 current.insert(fragment.lexeme, Value::new_array(fragment.pos));
             } else {
                 current.insert(fragment.lexeme, Value::new_table(fragment.pos));
@@ -374,17 +401,11 @@ fn parse_multiline_table<'doc>(
         current = current.get_mut(fragment.lexeme).unwrap();
     }
 
-    if array_element {
-        let mut table = Value::new_table(scanner.peek_token(0)?.pos);
-        while scanner.peek_token(0)?.type_ != TokenType::LeftBracket && !scanner.is_at_end() {
-            parse_kv(scanner, &mut table, depth)?;
-        }
-        current.append(table);
-    } else {
-        while scanner.peek_token(0)?.type_ != TokenType::LeftBracket && !scanner.is_at_end() {
-            parse_kv(scanner, current, depth)?;
-        }
+    let mut table = Value::new_table(scanner.peek_token(0)?.pos);
+    while !scanner.peek_token(0)?.type_.is_bracket() && !scanner.is_at_end() {
+        parse_kv(scanner, &mut table, depth)?;
     }
+    current.append(table);
 
     Ok(())
 }
@@ -472,9 +493,13 @@ pub enum TokenType {
 
     /// [
     LeftBracket,
+    /// [[
+    DoubleLeftBracket,
 
     /// ]
     RightBracket,
+    /// ]]
+    DoubleRightBracket,
 
     /// {
     LeftBrace,
@@ -489,11 +514,17 @@ pub enum TokenType {
 }
 
 impl TokenType {
+    fn is_bracket(&self) -> bool {
+        matches!(self, TokenType::LeftBracket | TokenType::DoubleLeftBracket)
+    }
+
     fn may_be_key(&self) -> bool {
         !matches!(
             self,
             TokenType::LeftBracket
+                | TokenType::DoubleLeftBracket
                 | TokenType::RightBracket
+                | TokenType::DoubleRightBracket
                 | TokenType::LeftBrace
                 | TokenType::RightBrace
                 | TokenType::Equals
@@ -575,8 +606,24 @@ impl<'a> Scanner<'a> {
 
         self.set_start();
         let tk = match self.advance_char() {
-            b'[' => TokenType::LeftBracket,
-            b']' => TokenType::RightBracket,
+            b'[' => {
+                if self.peek_char() == b'[' {
+                    self.advance_char();
+                    TokenType::DoubleLeftBracket
+                } else {
+                    TokenType::LeftBracket
+                }
+            }
+
+            b']' => {
+                if self.peek_char() == b']' {
+                    self.advance_char();
+                    TokenType::DoubleRightBracket
+                } else {
+                    TokenType::RightBracket
+                }
+            }
+
             b'{' => TokenType::LeftBrace,
             b'}' => TokenType::RightBrace,
             b',' => TokenType::Comma,
@@ -725,6 +772,7 @@ impl<'a> Scanner<'a> {
         self.current_pos.reset_col();
     }
 
+    /// returns prev char
     fn advance_char(&mut self) -> u8 {
         self.current_pos.inc_col();
         self.current += 1;

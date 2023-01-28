@@ -10,6 +10,9 @@ fn main() {
     };
 
     let file = std::fs::read_to_string(filename).unwrap();
+    let tokens = toml::scan(&file).unwrap();
+    println!("{:#?}", tokens);
+
     let toml = toml::parse(&file).unwrap();
     println!("{:#?}", toml);
 
