@@ -744,13 +744,14 @@ fn into_keyword(s: &str) -> Option<TokenType> {
     }
 }
 
-// non-recursive
+/// non-recursive. returns whether passed or not
 #[cfg(test)]
 pub(crate) fn for_each_toml_in_dir(
     crate_dir: &std::path::Path,
     dir: &std::path::Path,
-    mut f: impl FnMut(String, String),
-) {
+    mut f: impl FnMut(String, String) -> bool,
+) -> bool {
+    let mut passed = true;
     let toml = std::ffi::OsString::from("toml");
     for file in std::fs::read_dir(dir).unwrap() {
         let file = file.unwrap();
@@ -761,25 +762,27 @@ pub(crate) fn for_each_toml_in_dir(
             continue;
         }
         if !file.file_type().unwrap().is_file() {
-            panic!(
+            eprintln!(
                 "{} is not a regular file (symlink, pipe, socket?)",
                 path.display()
             );
         }
 
         if path.extension() != Some(&toml) {
-            panic!("{} is not a .toml file", path.display());
+            eprintln!("{} is not a .toml file", path.display());
         }
 
-        f(
+        passed &= f(
             format!("{}", path.display()),
             std::fs::read_to_string(path).unwrap(),
         );
     }
+
+    passed
 }
 
 #[cfg(test)]
-pub(crate) fn check_parse(name: String, contents: String) {
+pub(crate) fn check_parse(name: String, contents: String) -> bool {
     println!("parse {}", name);
 
     let expected_debug = contents
@@ -799,24 +802,28 @@ pub(crate) fn check_parse(name: String, contents: String) {
                 diff::Result::Right(r) => println!("+{}", r),
             }
         }
-        assert_eq!(expected_debug, debug, "different parse result")
     }
+
+    expected_debug == debug
 }
 
 #[test]
 fn test_parse() {
+    let mut passed = true;
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let ok_bd_tests_dir = crate_dir.join("tests");
     let bad_bd_tests_dir = ok_bd_tests_dir.join("should_fail");
     let ok_parse_dir = ok_bd_tests_dir.join("toml");
     let bad_parse_dir = ok_parse_dir.join("should_fail");
 
-    for_each_toml_in_dir(&crate_dir, &ok_bd_tests_dir, check_parse);
-    for_each_toml_in_dir(&crate_dir, &bad_bd_tests_dir, check_parse);
-    for_each_toml_in_dir(&crate_dir, &ok_parse_dir, check_parse);
+    passed &= for_each_toml_in_dir(&crate_dir, &ok_bd_tests_dir, check_parse);
+    passed &= for_each_toml_in_dir(&crate_dir, &bad_bd_tests_dir, check_parse);
+    passed &= for_each_toml_in_dir(&crate_dir, &ok_parse_dir, check_parse);
 
-    for_each_toml_in_dir(&crate_dir, &bad_parse_dir, |name, contents| {
+    passed &= for_each_toml_in_dir(&crate_dir, &bad_parse_dir, |name, contents| {
         println!("parse {}, should fail", name);
-        let _ = parse(&contents).unwrap_err();
+        parse(&contents).is_err()
     });
+
+    assert!(passed);
 }

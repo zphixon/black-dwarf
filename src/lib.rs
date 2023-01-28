@@ -1,6 +1,5 @@
 use crate::toml::Pos;
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use toml::Value;
 
 pub mod toml;
@@ -197,7 +196,7 @@ impl<'doc, 'value: 'doc> TryFrom<&'value Value<'doc>> for BlackDwarf<'doc> {
 }
 
 #[cfg(test)]
-pub(crate) fn check_try_from(name: String, contents: String) {
+pub(crate) fn check_try_from(name: String, contents: String) -> bool {
     println!("check bd{}", name);
 
     let expected_debug = contents
@@ -218,21 +217,25 @@ pub(crate) fn check_try_from(name: String, contents: String) {
                 diff::Result::Right(r) => println!("+{}", r),
             }
         }
-        assert_eq!(expected_debug, debug, "different parse result")
     }
+
+    expected_debug == debug
 }
 
 #[test]
 fn test_bd() {
+    let mut passed = true;
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bd_tests_dir = crate_dir.join("tests");
     let should_fail_dir = bd_tests_dir.join("should_fail");
 
-    toml::for_each_toml_in_dir(&crate_dir, &bd_tests_dir, check_try_from);
+    passed &= toml::for_each_toml_in_dir(&crate_dir, &bd_tests_dir, check_try_from);
 
-    toml::for_each_toml_in_dir(&crate_dir, &should_fail_dir, |name, contents| {
+    passed &= toml::for_each_toml_in_dir(&crate_dir, &should_fail_dir, |name, contents| {
         println!("check bd {}, should fail", name);
         let toml = toml::parse(&contents).unwrap();
-        let _bd = BlackDwarf::try_from(&toml).unwrap_err();
+        BlackDwarf::try_from(&toml).is_err()
     });
+
+    assert!(passed);
 }
