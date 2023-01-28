@@ -1,6 +1,13 @@
 #--{
 #--    "a": 1,
 #--    "b": 32.2,
+#--    "z": inf,
+#--    "x": NaN,
+#--    "big": 123456,
+#--    "biggest": inf,
+#--    "inf": 0.0,
+#--    "four-by-four": 44000.0,
+#--    "underscore": 1.234e57,
 #--    "deez": {
 #--        "nuts": {
 #--            "goteem": 2,
@@ -8,11 +15,24 @@
 #--    },
 #--    "ayylmao": {
 #--        "bogos-binted": 777777777,
+#--        "lol": 3,
+#--        "xd": "-3.1",
+#--        "hex": 66,
+#--        "oct": 25,
+#--        "bin": 42,
 #--    },
 #--}
 
 a = 1
 b = 32.2
+z = +inf
+x = -nan
+big = 123_456
+biggest = inf
+inf = 0.00
+
+four-by-four = 4.4e4
+underscore = 1_2.3_4e5_6
 
 [deez.nuts]
 goteem = 2
@@ -20,4 +40,8 @@ goteem = 2
 [ayylmao]
 bogos-binted = 777777777
 lol = +3
-xd = -3.1
+xd = '-3.1'
+
+hex = 0x42
+oct = 0o31
+bin = 0b101010

@@ -38,12 +38,12 @@ least I could do was a line/col for the first byte in a token? Cause if you're
 consuming toml as a semantic configuration format you probably want to point to
 the errors?
 
-- [ ] plus-prefixed positive numbers
-- [ ] underscores in numbers
-- [ ] alternative base representation integers
-- [ ] exponential notation for floating points
+- [X] plus-prefixed positive numbers
+- [X] underscores in numbers
+- [X] alternative base representation integers
+- [X] exponential notation for floating points
 - [ ] "decimal surrounded by at least one digit on each side"
-- [ ] +/- inf/nan
+- [X] +/- inf/nan
 - [ ] datetime (offset date-time, local date-time, local date, local time)
 - [ ] multiline strings
 - [ ] string escapes

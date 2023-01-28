@@ -606,6 +606,12 @@ impl<'a> Scanner<'a> {
 
         self.set_start();
         let tk = match self.advance_char() {
+            b'{' => TokenType::LeftBrace,
+            b'}' => TokenType::RightBrace,
+            b',' => TokenType::Comma,
+            b'.' => TokenType::Dot,
+            b'=' => TokenType::Equals,
+
             b'[' => {
                 if self.peek_char() == b'[' {
                     self.advance_char();
@@ -624,21 +630,25 @@ impl<'a> Scanner<'a> {
                 }
             }
 
-            b'{' => TokenType::LeftBrace,
-            b'}' => TokenType::RightBrace,
-            b',' => TokenType::Comma,
-            b'.' => TokenType::Dot,
-            b'=' => TokenType::Equals,
+            c if c.is_ascii_digit() => self.number()?,
+            b'+' => self.number()?,
+            b'-' => {
+                if self.peek_char().is_ascii_digit() {
+                    self.number()?
+                } else {
+                    self.ident()?
+                }
+            }
 
             c @ (b'"' | b'\'') => self.scan_string(c)?,
 
             c => {
-                if is_digit(c) {
+                if c.is_ascii_digit() {
                     self.number_or_datetime()?
                 } else if is_whitespace(c) {
                     panic!("found whitespace where there shouldn't be any");
                 } else {
-                    self.ident_or_literal()?
+                    self.ident()?
                 }
             }
         };
@@ -647,7 +657,103 @@ impl<'a> Scanner<'a> {
         Ok(&self.tokens[self.tokens.len() - 1])
     }
 
-    fn ident_or_literal(&mut self) -> Result<TokenType, BlackDwarfError> {
+    fn nan(&mut self, negative: bool) -> Result<TokenType, BlackDwarfError> {
+        self.advance_char();
+        let a = self.advance_char();
+        let n = self.advance_char();
+        match (negative, a, n) {
+            (false, b'a', b'n') => return Ok(TokenType::Float(f64::NAN)),
+            (true, b'a', b'n') => return Ok(TokenType::Float(-f64::NAN)),
+            _ => {
+                return Err(BlackDwarfError::ParseError {
+                    why: format!("invalid number: '{}'", self.lexeme()?),
+                    where_: self.start_pos,
+                });
+            }
+        }
+    }
+
+    fn inf(&mut self, negative: bool) -> Result<TokenType, BlackDwarfError> {
+        self.advance_char();
+        let n = self.advance_char();
+        let f = self.advance_char();
+        match (negative, n, f) {
+            (false, b'n', b'f') => return Ok(TokenType::Float(f64::INFINITY)),
+            (true, b'f', b'f') => return Ok(TokenType::Float(f64::NEG_INFINITY)),
+            _ => {
+                return Err(BlackDwarfError::ParseError {
+                    why: format!("invalid number: '{}'", self.lexeme()?),
+                    where_: self.start_pos,
+                });
+            }
+        }
+    }
+
+    fn number(&mut self) -> Result<TokenType, BlackDwarfError> {
+        let mut negative = false;
+        if self.peek_char() == b'+' || self.peek_char() == b'-' {
+            negative = self.peek_char() == b'-';
+            self.advance_char();
+        }
+
+        if self.peek_char() == b'n' {
+            return self.nan(negative);
+        }
+
+        if self.peek_char() == b'i' {
+            return self.inf(negative);
+        }
+
+        match self.peek_char() {
+            b'x' => return self.hex(negative),
+            b'o' => return self.octal(negative),
+            b'b' => return self.binary(negative),
+            _ => {}
+        }
+
+        let mut has_underscore = false;
+        while dec_or_underscore(self.peek_char(), &mut has_underscore) {
+            self.advance_char();
+        }
+
+        if self.peek_char() == b'-' && self.lexeme()?.len() == 4 {
+            return self.datetime();
+        }
+
+        if self.peek_char() == b'.' {
+            self.advance_char();
+            while dec_or_underscore(self.peek_char(), &mut has_underscore) {
+                self.advance_char();
+            }
+        }
+
+        if self.peek_char() == b'e' || self.peek_char() == b'E' {
+            self.advance_char();
+            while dec_or_underscore(self.peek_char(), &mut has_underscore) {
+                self.advance_char();
+            }
+        }
+
+        let lexeme = self.lexeme()?;
+        let to_parse = if has_underscore {
+            lexeme.replace("_", "")
+        } else {
+            lexeme.to_string()
+        };
+
+        if let Ok(integer) = to_parse.parse() {
+            Ok(TokenType::Integer(integer))
+        } else if let Ok(float) = to_parse.parse() {
+            Ok(TokenType::Float(float))
+        } else {
+            Err(BlackDwarfError::ParseError {
+                why: format!("invalid number: '{}' (parsed as '{}')", lexeme, to_parse),
+                where_: self.start_pos,
+            })
+        }
+    }
+
+    fn ident(&mut self) -> Result<TokenType, BlackDwarfError> {
         while !is_non_identifier(self.peek_char()) {
             self.advance_char();
         }
@@ -692,18 +798,18 @@ impl<'a> Scanner<'a> {
     }
 
     fn number_or_datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
-        while is_digit(self.peek_char()) {
+        while self.peek_char().is_ascii_digit() {
             self.advance_char();
         }
 
         // dates
         if self.peek_char() == b'-' && self.lexeme()?.len() == 4 {
-            return self.scan_datetime();
+            return self.datetime();
         }
 
         // floats
         if self.peek_char() == b'.' {
-            return self.scan_float();
+            return self.float();
         }
 
         let value = self.lexeme()?;
@@ -717,9 +823,9 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_float(&mut self) -> Result<TokenType, BlackDwarfError> {
+    fn float(&mut self) -> Result<TokenType, BlackDwarfError> {
         self.advance_char();
-        while is_digit(self.peek_char()) {
+        while self.peek_char().is_ascii_digit() {
             self.advance_char();
         }
 
@@ -734,7 +840,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
+    fn datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
         // TODO
         Ok(TokenType::Ident)
     }
@@ -801,8 +907,91 @@ impl<'a> Scanner<'a> {
     }
 }
 
-fn is_digit(c: u8) -> bool {
-    (b'0'..=b'9').contains(&c)
+macro_rules! impl_alt_base {
+    ($name:ident, $base_i64:literal, $base_or_underscore:ident, $digit_to_dec:ident) => {
+        impl<'a> Scanner<'a> {
+            fn $name(&mut self, negative: bool) -> Result<TokenType, BlackDwarfError> {
+                self.advance_char();
+
+                let mut digits = Vec::new();
+                while $base_or_underscore(self.peek_char(), &mut false) {
+                    digits.push(self.peek_char());
+                    self.advance_char();
+                }
+
+                let err = || BlackDwarfError::ParseError {
+                    why: format!("invalid number literal"),
+                    where_: self.current_pos,
+                };
+                let map_err = |_| err();
+
+                let mut value: i64 = 0;
+                for (i, digit) in digits.iter().rev().enumerate() {
+                    let digit_value = $digit_to_dec(*digit);
+                    value = i
+                        .try_into()
+                        .map(|i| $base_i64.checked_pow(i))
+                        .map_err(map_err)?
+                        .ok_or_else(err)?
+                        .checked_mul(digit_value)
+                        .ok_or_else(err)?
+                        .checked_add(value)
+                        .ok_or_else(err)?;
+                }
+
+                Ok(TokenType::Integer(if negative {
+                    value.checked_neg().ok_or_else(err)?
+                } else {
+                    value
+                }))
+            }
+        }
+    };
+}
+
+impl_alt_base!(hex, 16_i64, hex_or_underscore, hex_to_i64);
+impl_alt_base!(octal, 8_i64, oct_or_underscore, hex_to_i64);
+impl_alt_base!(binary, 2_i64, bin_or_underscore, hex_to_i64);
+
+fn dec_or_underscore(c: u8, has_underscore: &mut bool) -> bool {
+    if c == b'_' {
+        *has_underscore = true;
+    }
+
+    c.is_ascii_digit() || c == b'_'
+}
+
+fn hex_to_i64(digit: u8) -> i64 {
+    (match digit {
+        b'0'..=b'9' => digit - b'0',
+        b'a'..=b'f' => digit - (b'a' - 10),
+        b'A'..=b'F' => digit - (b'A' - 10),
+        _ => unreachable!(),
+    } as i64)
+}
+
+fn hex_or_underscore(c: u8, has_underscore: &mut bool) -> bool {
+    if c == b'_' {
+        *has_underscore = true;
+    }
+
+    c.is_ascii_hexdigit() || c == b'_'
+}
+
+fn oct_or_underscore(c: u8, has_underscore: &mut bool) -> bool {
+    if c == b'_' {
+        *has_underscore = true;
+    }
+
+    (b'0'..=b'7').contains(&c) || c == b'_'
+}
+
+fn bin_or_underscore(c: u8, has_underscore: &mut bool) -> bool {
+    if c == b'_' {
+        *has_underscore = true;
+    }
+
+    c == b'0' || c == b'1'
 }
 
 fn is_whitespace(c: u8) -> bool {
