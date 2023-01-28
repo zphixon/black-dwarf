@@ -37,3 +37,81 @@ orange.skin = "thick"
 
 apple.color = "red"
 orange.color = "orange"
+
+3.14159 = "pi"
+
+str = "I'm a string. \"You can quote me\". Name\tJos\u00E9\nLocation\tSF."
+
+#str1 = """
+#Roses are red
+#Violets are blue"""
+
+# On a Unix system, the above multi-line string will most likely be the same as:
+str2 = "Roses are red\nViolets are blue"
+
+# On a Windows system, it will most likely be equivalent to:
+str3 = "Roses are red\r\nViolets are blue"
+
+# The following strings are byte-for-byte equivalent:
+str1 = "The quick brown fox jumps over the lazy dog."
+
+#str2 = """
+#The quick brown \
+#
+#
+#  fox jumps over \
+#    the lazy dog."""
+#
+#str3 = """\
+#       The quick brown \
+#       fox jumps over \
+#       the lazy dog.\
+#       """
+
+#str4 = """Here are two quotation marks: "". Simple enough."""
+## str5 = """Here are three quotation marks: """."""  # INVALID
+#str5 = """Here are three quotation marks: ""\"."""
+#str6 = """Here are fifteen quotation marks: ""\"""\"""\"""\"""\"."""
+#
+## "This," she said, "is just a pointless statement."
+#str7 = """"This," she said, "is just a pointless statement.""""
+
+# What you see is what you get.
+winpath  = 'C:\Users\nodejs\templates'
+winpath2 = '\\ServerX\admin$\system32\'
+quoted   = 'Tom "Dubs" Preston-Werner'
+regex    = '<\i\c*\s*>'
+
+#regex2 = '''I [dw]on't need \d{2} apples'''
+#lines  = '''
+#The first newline is
+#trimmed in raw strings.
+#   All other whitespace
+#   is preserved.
+#'''
+
+#quot15 = '''Here are fifteen quotation marks: """""""""""""""'''
+
+# apos15 = '''Here are fifteen apostrophes: ''''''''''''''''''  # INVALID
+apos15 = "Here are fifteen apostrophes: '''''''''''''''"
+
+## 'That,' she said, 'is still pointless.'
+#str = ''''That,' she said, 'is still pointless.''''
+
+#int1 = +99
+int2 = 42
+int3 = 0
+int4 = -17
+
+integers = [ 1, 2, 3 ]
+colors = [ "red", "yellow", "green" ]
+nested_arrays_of_ints = [ [ 1, 2 ], [3, 4, 5] ]
+nested_mixed_array = [ [ 1, 2 ], ["a", "b", "c"] ]
+#string_array = [ "all", 'strings', """are the same""", '''type''' ]
+
+# Mixed-type arrays are allowed
+numbers = [ 0.1, 0.2, 0.5, 1, 2, 5 ]
+contributors = [
+  "Foo Bar <foo@example.com>",
+  { name = "Baz Qux", email = "bazqux@example.com", url = "https://example.com/bazqux" }
+]

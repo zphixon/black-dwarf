@@ -5,7 +5,7 @@
 
 use crate::BlackDwarfError;
 use indexmap::IndexMap;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Instant};
 
 pub enum Value<'doc> {
     Table {
@@ -181,7 +181,7 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
     let mut top_level = Value::new_table(first);
     while scanner.peek_token(0)?.type_ != TokenType::Eof {
         let peeked = scanner.peek_token(0)?;
-        if peeked.type_ == TokenType::Ident {
+        if peeked.type_.may_be_key() {
             parse_kv(&mut scanner, &mut top_level, 0)?;
         } else if peeked.type_ == TokenType::LeftBracket {
             parse_multiline_table(&mut scanner, &mut top_level, 0)?;
@@ -211,24 +211,27 @@ macro_rules! ensure {
 
 fn parse_kv<'doc>(
     scanner: &mut Scanner<'doc>,
-    current: &mut Value<'doc>,
+    mut current: &mut Value<'doc>,
     depth: usize,
 ) -> Result<(), BlackDwarfError> {
     ensure!(depth, scanner);
 
-    let name = consume(scanner, TokenType::Ident)?;
+    let path = parse_path(scanner)?;
     let _equals = consume(scanner, TokenType::Equals)?;
     let value = parse_value(scanner, depth)?;
 
-    if !current.is_table() {
-        return Err(BlackDwarfError::IncorrectType {
-            type_: current.type_str(),
-            expected: "table",
-            where_: current.pos(),
-        });
-    }
+    for (i, fragment) in path.iter().enumerate() {
+        if i + 1 != path.len() {
+            if !current.contains_key(fragment.lexeme) {
+                current.insert(fragment.lexeme, Value::new_table(fragment.pos));
+            }
 
-    current.insert(name.lexeme, value);
+            current = current.get_mut(fragment.lexeme).unwrap();
+        } else {
+            current.insert(fragment.lexeme, value);
+            break;
+        }
+    }
 
     Ok(())
 }
@@ -267,7 +270,7 @@ fn parse_value<'doc>(
 
         _ => {
             return Err(BlackDwarfError::ParseError {
-                why: format!("{:?}s not yet supported", next.type_),
+                why: format!("not yet supported: {:?}", next),
                 where_: next.pos,
             })
         }
@@ -387,15 +390,33 @@ fn parse_multiline_table<'doc>(
 }
 
 fn parse_path<'doc>(scanner: &mut Scanner<'doc>) -> Result<Vec<Token<'doc>>, BlackDwarfError> {
-    let mut names = vec![consume(scanner, TokenType::Ident)?];
-    while scanner.peek_token(0)?.type_ != TokenType::RightBracket && !scanner.is_at_end() {
+    let mut names = vec![consume_key(scanner)?];
+    while (scanner.peek_token(0)?.type_.may_be_key()
+        || scanner.peek_token(0)?.type_ == TokenType::Dot)
+        && !scanner.is_at_end()
+    {
         let _dot = consume(scanner, TokenType::Dot)?;
-        names.push(consume(scanner, TokenType::Ident)?);
+        names.push(consume_key(scanner)?);
     }
     Ok(names)
 }
 
-fn consume<'a>(scanner: &mut Scanner<'a>, type_: TokenType) -> Result<Token<'a>, BlackDwarfError> {
+fn consume_key<'doc>(scanner: &mut Scanner<'doc>) -> Result<Token<'doc>, BlackDwarfError> {
+    let tok = scanner.next_token()?;
+    if tok.type_.may_be_key() {
+        Ok(tok)
+    } else {
+        Err(BlackDwarfError::ParseError {
+            why: format!("expected non-symbol for key name, got '{}'", tok.lexeme),
+            where_: tok.pos,
+        })
+    }
+}
+
+fn consume<'doc>(
+    scanner: &mut Scanner<'doc>,
+    type_: TokenType,
+) -> Result<Token<'doc>, BlackDwarfError> {
     let tok = scanner.next_token()?;
     if tok.type_ == type_ {
         Ok(tok)
@@ -445,8 +466,8 @@ pub enum TokenType {
     Integer(i64),
     Float(f64),
     Boolean(bool),
-
     String,
+    Datetime(Instant),
     Ident,
 
     /// [
@@ -465,6 +486,22 @@ pub enum TokenType {
     Dot,
     Comma,
     Eof,
+}
+
+impl TokenType {
+    fn may_be_key(&self) -> bool {
+        !matches!(
+            self,
+            TokenType::LeftBracket
+                | TokenType::RightBracket
+                | TokenType::LeftBrace
+                | TokenType::RightBrace
+                | TokenType::Equals
+                | TokenType::Dot
+                | TokenType::Comma
+                | TokenType::Eof
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -550,11 +587,11 @@ impl<'a> Scanner<'a> {
 
             c => {
                 if is_digit(c) {
-                    self.scan_number()?
+                    self.number_or_datetime()?
                 } else if is_whitespace(c) {
                     panic!("found whitespace where there shouldn't be any");
                 } else {
-                    self.identifier_or_keyword()?
+                    self.ident_or_literal()?
                 }
             }
         };
@@ -563,13 +600,18 @@ impl<'a> Scanner<'a> {
         Ok(&self.tokens[self.tokens.len() - 1])
     }
 
-    fn identifier_or_keyword(&mut self) -> Result<TokenType, BlackDwarfError> {
+    fn ident_or_literal(&mut self) -> Result<TokenType, BlackDwarfError> {
         while !is_non_identifier(self.peek_char()) {
             self.advance_char();
         }
 
-        if let Some(keyword) = into_keyword(self.lexeme()?) {
+        let lexeme = self.lexeme()?;
+        if let Some(keyword) = into_keyword(lexeme) {
             Ok(keyword)
+        } else if let Ok(integer) = lexeme.parse() {
+            Ok(TokenType::Integer(integer))
+        } else if let Ok(float) = lexeme.parse() {
+            Ok(TokenType::Float(float))
         } else {
             Ok(TokenType::Ident)
         }
@@ -581,7 +623,7 @@ impl<'a> Scanner<'a> {
                 self.advance_line();
             }
 
-            if self.peek_char() == b'\\' {
+            if self.peek_char() == b'\\' && quote == b'"' {
                 self.advance_char();
                 self.advance_line();
             }
@@ -602,21 +644,19 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_number(&mut self) -> Result<TokenType, BlackDwarfError> {
+    fn number_or_datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
         while is_digit(self.peek_char()) {
             self.advance_char();
         }
 
+        // dates
+        if self.peek_char() == b'-' && self.lexeme()?.len() == 4 {
+            return self.scan_datetime();
+        }
+
+        // floats
         if self.peek_char() == b'.' {
-            let range = self.lookahead_char(1) == b'.';
-
-            while self.current != 0 && is_digit(self.peek_char()) {
-                self.reverse_char();
-            }
-
-            if !range {
-                return self.scan_float();
-            }
+            return self.scan_float();
         }
 
         let value = self.lexeme()?;
@@ -631,14 +671,9 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_float(&mut self) -> Result<TokenType, BlackDwarfError> {
+        self.advance_char();
         while is_digit(self.peek_char()) {
             self.advance_char();
-        }
-        if self.peek_char() == b'.' {
-            self.advance_char();
-            while is_digit(self.peek_char()) {
-                self.advance_char();
-            }
         }
 
         let value = self.lexeme()?;
@@ -650,6 +685,11 @@ impl<'a> Scanner<'a> {
                 where_: self.current_pos,
             })
         }
+    }
+
+    fn scan_datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
+        // TODO
+        Ok(TokenType::Ident)
     }
 
     fn add_token(&mut self, type_: TokenType) -> Result<(), BlackDwarfError> {
@@ -772,10 +812,16 @@ pub(crate) fn for_each_toml_in_dir(
             eprintln!("{} is not a .toml file", path.display());
         }
 
-        passed &= f(
+        let result = f(
             format!("{}", path.display()),
             std::fs::read_to_string(path).unwrap(),
         );
+
+        if !result {
+            println!("broke!");
+        }
+
+        passed &= result;
     }
 
     passed
@@ -791,7 +837,14 @@ pub(crate) fn check_parse(name: String, contents: String) -> bool {
         .map(|line| &line[3..])
         .fold(String::new(), |acc, next| acc + next + "\n");
 
-    let toml = parse(&contents).unwrap();
+    let toml = match parse(&contents) {
+        Ok(toml) => toml,
+        Err(err) => {
+            let toks = scan(&contents).unwrap();
+            println!("{:#?}\n{:?}", toks, err);
+            return false;
+        }
+    };
     let debug = format!("{:#?}\n", toml);
 
     if expected_debug != debug {
