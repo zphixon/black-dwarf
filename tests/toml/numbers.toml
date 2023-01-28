@@ -1,16 +1,21 @@
 #--{
 #--    "a": 1,
-#--    "b": 2.2,
+#--    "b": 32.2,
 #--    "deez": {
 #--        "nuts": {
 #--            "goteem": 2,
 #--        },
 #--    },
+#--    "ayylmao": {
+#--        "bogos-binted": 777777777,
+#--    },
 #--}
 
 a = 1
-b = 2.2
+b = 32.2
 
 [deez.nuts]
 goteem = 2
 
+[ayylmao]
+bogos-binted = 777777777
