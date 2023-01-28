@@ -1,0 +1,13 @@
+#--{
+#--    "fruit": {
+#--        "apple": {
+#--            "sweet": true,
+#--            "color": "red",
+#--        },
+#--    },
+#--}
+
+fruit.apple.sweet = true
+
+[fruit.apple]
+color = 'red'

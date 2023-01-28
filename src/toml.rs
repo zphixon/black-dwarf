@@ -37,6 +37,64 @@ pub enum Value<'doc> {
         value: bool,
         pos: Pos,
     },
+
+    Datetime {
+        datetime: Datetime,
+        pos: Pos,
+    },
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub struct Datetime {
+    pub date: Option<Date>,
+    pub time: Option<Time>,
+    pub offset: Option<Offset>,
+}
+
+impl std::fmt::Debug for Datetime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug_struct = f.debug_struct("Datetime");
+
+        if let Some(date) = self.date.as_ref() {
+            debug_struct.field("year", &date.year);
+            debug_struct.field("month", &date.month);
+            debug_struct.field("day", &date.day);
+        }
+
+        if let Some(time) = self.time.as_ref() {
+            debug_struct.field("hour", &time.hour);
+            debug_struct.field("minute", &time.minute);
+            debug_struct.field("second", &time.second);
+            debug_struct.field("nanosecond", &time.nanosecond);
+        }
+
+        if let Some(offset) = self.offset.as_ref() {
+            debug_struct.field("offset", &offset);
+        }
+
+        debug_struct.finish()
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Date {
+    pub year: u16,
+    pub month: u8,
+    pub day: u8,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Time {
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub nanosecond: u32,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Offset {
+    Z,
+    Minutes(i16),
 }
 
 impl<'doc> Value<'doc> {
@@ -62,6 +120,7 @@ impl<'doc> Value<'doc> {
             Value::Integer { .. } => "integer",
             Value::Float { .. } => "float",
             Value::Boolean { .. } => "boolean",
+            Value::Datetime { .. } => "datetime",
         }
     }
 
@@ -73,6 +132,7 @@ impl<'doc> Value<'doc> {
             Value::Integer { pos, .. } => *pos,
             Value::Float { pos, .. } => *pos,
             Value::Boolean { pos, .. } => *pos,
+            Value::Datetime { pos, .. } => *pos,
         }
     }
 
@@ -103,6 +163,20 @@ impl<'doc> Value<'doc> {
 
     pub fn is_table(&self) -> bool {
         matches!(self, Value::Table { .. })
+    }
+
+    pub fn is_just_date(&self) -> bool {
+        matches!(
+            self,
+            Value::Datetime {
+                datetime: Datetime {
+                    date: Some(_),
+                    time: None,
+                    ..
+                },
+                ..
+            }
+        )
     }
 
     pub fn as_list(&self) -> Option<&[Value]> {
@@ -154,6 +228,7 @@ impl std::fmt::Debug for Value<'_> {
             Value::Integer { value, .. } => value.fmt(f),
             Value::Float { value, .. } => value.fmt(f),
             Value::Boolean { value, .. } => value.fmt(f),
+            Value::Datetime { datetime, .. } => datetime.fmt(f),
         }
     }
 }
@@ -220,7 +295,40 @@ fn parse_kv<'doc>(
 
     let path = parse_path(scanner)?;
     let _equals = consume(scanner, TokenType::Equals)?;
-    let value = parse_value(scanner, depth)?;
+    let mut value = parse_value(scanner, depth)?;
+
+    // ew lol
+    if scanner.peek_token(0)?.type_.is_time() {
+        if let Value::Datetime {
+            datetime:
+                Datetime {
+                    date: Some(date),
+                    time: None,
+                    ..
+                },
+            pos,
+        } = value
+        {
+            let Token {
+                type_: TokenType::Time {
+                    time,
+                    offset,
+                },
+                ..
+            } = scanner.next_token()? else {
+                unreachable!()
+            };
+
+            value = Value::Datetime {
+                datetime: Datetime {
+                    date: Some(date),
+                    time: Some(time),
+                    offset,
+                },
+                pos,
+            };
+        }
+    }
 
     for (i, fragment) in path.iter().enumerate() {
         if i + 1 != path.len() {
@@ -230,6 +338,14 @@ fn parse_kv<'doc>(
 
             current = current.get_mut(fragment.lexeme).unwrap();
         } else {
+            if !current.is_table() {
+                return Err(BlackDwarfError::IncorrectType {
+                    type_: current.type_str(),
+                    expected: "table",
+                    where_: fragment.pos,
+                });
+            }
+
             current.insert(fragment.lexeme, value);
             break;
         }
@@ -267,6 +383,29 @@ fn parse_value<'doc>(
 
         TokenType::Boolean(value) => Ok(Value::Boolean {
             value,
+            pos: next.pos,
+        }),
+
+        TokenType::Time { time, offset } => Ok(Value::Datetime {
+            datetime: Datetime {
+                date: None,
+                time: Some(time),
+                offset,
+            },
+            pos: next.pos,
+        }),
+
+        TokenType::Date(date) => Ok(Value::Datetime {
+            datetime: Datetime {
+                date: Some(date),
+                time: None,
+                offset: None,
+            },
+            pos: next.pos,
+        }),
+
+        TokenType::Datetime(datetime) => Ok(Value::Datetime {
+            datetime,
             pos: next.pos,
         }),
 
@@ -475,20 +614,26 @@ impl Pos {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token<'doc> {
     pub lexeme: &'doc str,
     pub type_: TokenType,
     pub pos: Pos,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenType {
     Integer(i64),
     Float(f64),
     Boolean(bool),
     String,
-    Datetime(Instant),
+    Datetime(Datetime),
+    Date(Date),
+    Time {
+        time: Time,
+        offset: Option<Offset>,
+    },
+
     Ident,
 
     /// [
@@ -514,6 +659,10 @@ pub enum TokenType {
 }
 
 impl TokenType {
+    fn is_time(&self) -> bool {
+        matches!(self, TokenType::Time { .. })
+    }
+
     fn is_bracket(&self) -> bool {
         matches!(self, TokenType::LeftBracket | TokenType::DoubleLeftBracket)
     }
@@ -644,7 +793,7 @@ impl<'a> Scanner<'a> {
 
             c => {
                 if c.is_ascii_digit() {
-                    self.number_or_datetime()?
+                    self.number()?
                 } else if is_whitespace(c) {
                     panic!("found whitespace where there shouldn't be any");
                 } else {
@@ -690,24 +839,26 @@ impl<'a> Scanner<'a> {
     }
 
     fn number(&mut self) -> Result<TokenType, BlackDwarfError> {
-        let mut negative = false;
-        if self.peek_char() == b'+' || self.peek_char() == b'-' {
-            negative = self.peek_char() == b'-';
+        let signed = if self.peek_char() == b'+' || self.peek_char() == b'-' {
+            let negative = self.peek_char() == b'-';
             self.advance_char();
-        }
+            Some(negative)
+        } else {
+            None
+        };
 
         if self.peek_char() == b'n' {
-            return self.nan(negative);
+            return self.nan(signed.unwrap_or_default());
         }
 
         if self.peek_char() == b'i' {
-            return self.inf(negative);
+            return self.inf(signed.unwrap_or_default());
         }
 
         match self.peek_char() {
-            b'x' => return self.hex(negative),
-            b'o' => return self.octal(negative),
-            b'b' => return self.binary(negative),
+            b'x' => return self.hex(signed.unwrap_or_default()),
+            b'o' => return self.octal(signed.unwrap_or_default()),
+            b'b' => return self.binary(signed.unwrap_or_default()),
             _ => {}
         }
 
@@ -716,8 +867,12 @@ impl<'a> Scanner<'a> {
             self.advance_char();
         }
 
-        if self.peek_char() == b'-' && self.lexeme()?.len() == 4 {
-            return self.datetime();
+        if self.peek_char() == b'-' && self.lexeme()?.len() == 4 && signed.is_none() {
+            return self.date();
+        }
+
+        if self.peek_char() == b':' && self.lexeme()?.len() == 2 && signed.is_none() {
+            return self.time(0);
         }
 
         if self.peek_char() == b'.' {
@@ -797,52 +952,161 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn number_or_datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
-        while self.peek_char().is_ascii_digit() {
-            self.advance_char();
+    fn date(&mut self) -> Result<TokenType, BlackDwarfError> {
+        macro_rules! next {
+            () => {
+                self.advance_char();
+                if self.is_at_end() {
+                    return Err(BlackDwarfError::ParseError {
+                        why: format!("invalid date: '{}'", self.lexeme()?),
+                        where_: self.start_pos,
+                    });
+                }
+            };
         }
 
-        // dates
-        if self.peek_char() == b'-' && self.lexeme()?.len() == 4 {
-            return self.datetime();
-        }
+        let year = self.lexeme()?;
 
-        // floats
-        if self.peek_char() == b'.' {
-            return self.float();
-        }
+        next!();
+        next!();
+        next!();
+        let month = &self.lexeme()?[5..=6];
 
-        let value = self.lexeme()?;
-        if let Ok(i) = value.parse::<i64>() {
-            Ok(TokenType::Integer(i))
+        next!();
+        next!();
+        next!();
+        let day = &self.lexeme()?[8..=9];
+
+        let time = if self.peek_char() == b'T' {
+            next!();
+            while self.peek_char().is_ascii_digit() {
+                self.advance_char();
+            }
+            Some(self.time(11)?)
         } else {
-            Err(BlackDwarfError::ParseError {
-                why: format!("invalid number literal '{}'", value),
-                where_: self.current_pos,
+            None
+        };
+
+        let year = year.parse().map_err(|_| BlackDwarfError::ParseError {
+            why: format!("invalid year '{}'", year),
+            where_: self.start_pos,
+        })?;
+
+        let month = month.parse().map_err(|_| BlackDwarfError::ParseError {
+            why: format!("invalid month '{}'", month),
+            where_: self.start_pos,
+        })?;
+
+        let day = day.parse().map_err(|_| BlackDwarfError::ParseError {
+            why: format!("invalid day '{}'", day),
+            where_: self.start_pos,
+        })?;
+
+        let date = Date { year, month, day };
+        Ok(if let Some(TokenType::Time { time, offset }) = time {
+            TokenType::Datetime(Datetime {
+                date: Some(date),
+                time: Some(time),
+                offset,
             })
-        }
+        } else {
+            TokenType::Date(date)
+        })
     }
 
-    fn float(&mut self) -> Result<TokenType, BlackDwarfError> {
-        self.advance_char();
-        while self.peek_char().is_ascii_digit() {
+    fn time(&mut self, start: usize) -> Result<TokenType, BlackDwarfError> {
+        macro_rules! next {
+            () => {
+                self.advance_char();
+                if self.is_at_end() {
+                    return Err(BlackDwarfError::ParseError {
+                        why: format!("invalid date: '{}'", self.lexeme()?),
+                        where_: self.start_pos,
+                    });
+                }
+            };
+        }
+
+        let where_ = self.start_pos;
+        let err = |what, lexeme| BlackDwarfError::ParseError {
+            why: format!("invalid {}: '{}'", what, lexeme),
+            where_,
+        };
+
+        let hour = &self.lexeme()?[start..=start + 1];
+
+        next!();
+        next!();
+        next!();
+        let minute = &self.lexeme()?[start + 3..=start + 4];
+
+        next!();
+        next!();
+        next!();
+        let second = &self.lexeme()?[start + 6..=start + 7];
+
+        let (nanosecond, nanos_len) = if self.peek_char() == b'.' {
             self.advance_char();
-        }
+            while self.peek_char().is_ascii_digit() {
+                self.advance_char();
+            }
 
-        let value = self.lexeme()?;
-        if let Ok(f) = value.parse::<f64>() {
-            Ok(TokenType::Float(f))
+            let lexeme = &self.lexeme()?[start + 8..];
+            let frac_secs = (String::from("0") + lexeme)
+                .parse::<f64>()
+                .map_err(|_| err("nanoseconds", lexeme))?;
+            ((frac_secs * 1_000_000_000.0) as u32, lexeme.len())
         } else {
-            Err(BlackDwarfError::ParseError {
-                why: format!("invalid number literal '{}'", value),
-                where_: self.current_pos,
-            })
-        }
-    }
+            (0_u32, 0)
+        };
 
-    fn datetime(&mut self) -> Result<TokenType, BlackDwarfError> {
-        // TODO
-        Ok(TokenType::Ident)
+        let offset = match self.peek_char() {
+            b'+' | b'-' => {
+                let sign = if self.advance_char() == b'+' { 1 } else { -1 };
+
+                next!();
+                next!();
+                next!();
+                let hour = &self.lexeme()?[start + nanos_len + 9..=start + nanos_len + 10];
+
+                next!();
+                next!(); // why not 3??
+                let minute = &self.lexeme()?[start + nanos_len + 12..=start + nanos_len + 13];
+
+                let hour_num = hour.parse::<i16>().map_err(|_| err("offset hour", hour))?;
+                if hour_num > 24 {
+                    return Err(err("offset hour", hour));
+                }
+
+                let minute_num = minute
+                    .parse::<i16>()
+                    .map_err(|_| err("offset minute", minute))?;
+                if minute_num > 60 {
+                    return Err(err("offset minute", minute));
+                }
+
+                Some(Offset::Minutes(sign * (hour_num * 60 + minute_num)))
+            }
+            b'Z' => {
+                self.advance_char();
+                Some(Offset::Z)
+            }
+            _ => None,
+        };
+
+        let hour = hour.parse().map_err(|_| err("hour", hour))?;
+        let minute = minute.parse().map_err(|_| err("minute", minute))?;
+        let second = second.parse().map_err(|_| err("second", second))?;
+
+        Ok(TokenType::Time {
+            time: Time {
+                hour,
+                minute,
+                second,
+                nanosecond,
+            },
+            offset,
+        })
     }
 
     fn add_token(&mut self, type_: TokenType) -> Result<(), BlackDwarfError> {
@@ -915,7 +1179,9 @@ macro_rules! impl_alt_base {
 
                 let mut digits = Vec::new();
                 while $base_or_underscore(self.peek_char(), &mut false) {
-                    digits.push(self.peek_char());
+                    if self.peek_char() != b'_' {
+                        digits.push(self.peek_char());
+                    }
                     self.advance_char();
                 }
 
@@ -1019,6 +1285,17 @@ fn into_keyword(s: &str) -> Option<TokenType> {
         "false" => Some(TokenType::Boolean(false)),
         _ => None,
     }
+}
+
+#[test]
+fn scanner_sanity() {
+    let mut scanner = Scanner::new("abc");
+    let a = scanner.peek_char();
+    let aa = scanner.advance_char();
+    let b = scanner.peek_char();
+    assert_eq!(a, aa);
+    assert_eq!(a, b'a');
+    assert_eq!(b, b'b');
 }
 
 /// non-recursive. returns whether passed or not
