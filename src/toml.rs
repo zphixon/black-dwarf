@@ -342,6 +342,14 @@ fn parse_kv<'doc>(
     }
 
     for (i, fragment) in path.iter().enumerate() {
+        if !current.is_table() {
+            return Err(BlackDwarfError::IncorrectType {
+                type_: current.type_str(),
+                expected: "table",
+                where_: _equals.pos,
+            });
+        }
+
         if i + 1 != path.len() {
             if !current.contains_key(fragment.lexeme) {
                 current.insert(fragment.lexeme, Value::new_table(fragment.pos));
@@ -349,14 +357,6 @@ fn parse_kv<'doc>(
 
             current = current.get_mut(fragment.lexeme).unwrap();
         } else {
-            if !current.is_table() {
-                return Err(BlackDwarfError::IncorrectType {
-                    type_: current.type_str(),
-                    expected: "table",
-                    where_: fragment.pos,
-                });
-            }
-
             current.insert(fragment.lexeme, value);
             break;
         }
@@ -562,6 +562,14 @@ fn parse_multiline_array_element<'doc>(
         }
 
         current = current.get_mut(fragment.lexeme).unwrap();
+    }
+
+    if !current.is_array() {
+        return Err(BlackDwarfError::IncorrectType {
+            type_: current.type_str(),
+            expected: "array",
+            where_: _dlb.pos,
+        });
     }
 
     let mut table = Value::new_table(scanner.peek_token(0)?.pos);
@@ -832,8 +840,17 @@ impl<'a> Scanner<'a> {
 
     fn nan(&mut self, negative: bool) -> Result<TokenType, BlackDwarfError> {
         self.advance_char();
+        if self.is_at_end() {
+            return Ok(TokenType::Ident);
+        }
         let a = self.advance_char();
+        if self.is_at_end() {
+            return Ok(TokenType::Ident);
+        }
         let n = self.advance_char();
+        if self.is_at_end() {
+            return Ok(TokenType::Ident);
+        }
         match (negative, a, n) {
             (false, b'a', b'n') => return Ok(TokenType::Float(f64::NAN)),
             (true, b'a', b'n') => return Ok(TokenType::Float(-f64::NAN)),
@@ -848,8 +865,17 @@ impl<'a> Scanner<'a> {
 
     fn inf(&mut self, negative: bool) -> Result<TokenType, BlackDwarfError> {
         self.advance_char();
+        if self.is_at_end() {
+            return Ok(TokenType::Ident);
+        }
         let n = self.advance_char();
+        if self.is_at_end() {
+            return Ok(TokenType::Ident);
+        }
         let f = self.advance_char();
+        if self.is_at_end() {
+            return Ok(TokenType::Ident);
+        }
         match (negative, n, f) {
             (false, b'n', b'f') => return Ok(TokenType::Float(f64::INFINITY)),
             (true, b'f', b'f') => return Ok(TokenType::Float(f64::NEG_INFINITY)),
@@ -994,12 +1020,22 @@ impl<'a> Scanner<'a> {
         next!();
         next!();
         next!();
-        let month = &self.lexeme()?[5..=6];
+        let month = std::str::from_utf8(&self.lexeme()?.as_bytes()[5..=6]).map_err(|_| {
+            BlackDwarfError::ParseError {
+                why: "invalid utf-8".into(),
+                where_: self.start_pos,
+            }
+        })?;
 
         next!();
         next!();
         next!();
-        let day = &self.lexeme()?[8..=9];
+        let day = std::str::from_utf8(&self.lexeme()?.as_bytes()[8..=9]).map_err(|_| {
+            BlackDwarfError::ParseError {
+                why: "invalid utf-8".into(),
+                where_: self.start_pos,
+            }
+        })?;
 
         let time = if self.peek_char() == b'T' {
             next!();
@@ -1057,17 +1093,55 @@ impl<'a> Scanner<'a> {
             where_,
         };
 
-        let hour = &self.lexeme()?[start..=start + 1];
+        if start + 1 >= self.lexeme()?.as_bytes().len() {
+            return Err(BlackDwarfError::ParseError {
+                why: format!("invalid date: '{}'", self.lexeme()?),
+                where_: self.start_pos,
+            });
+        }
+        let hour =
+            std::str::from_utf8(&self.lexeme()?.as_bytes()[start..=start + 1]).map_err(|_| {
+                BlackDwarfError::ParseError {
+                    why: "invalid utf-8".into(),
+                    where_: self.start_pos,
+                }
+            })?;
+
+        if self.is_at_end() {
+            return Err(BlackDwarfError::ParseError {
+                why: format!("invalid date: '{}'", self.lexeme()?),
+                where_: self.start_pos,
+            });
+        }
+        next!();
+        next!();
+        next!();
+        if start + 4 >= self.lexeme()?.as_bytes().len() {
+            return Err(BlackDwarfError::ParseError {
+                why: format!("invalid date: '{}'", self.lexeme()?),
+                where_: self.start_pos,
+            });
+        }
+        let minute = std::str::from_utf8(&self.lexeme()?.as_bytes()[start + 3..=start + 4])
+            .map_err(|_| BlackDwarfError::ParseError {
+                why: "invalid utf-8".into(),
+                where_: self.start_pos,
+            })?;
 
         next!();
         next!();
         next!();
-        let minute = &self.lexeme()?[start + 3..=start + 4];
-
-        next!();
-        next!();
-        next!();
-        let second = &self.lexeme()?[start + 6..=start + 7];
+        if start + 7 >= self.lexeme()?.as_bytes().len() {
+            return Err(BlackDwarfError::ParseError {
+                why: format!("invalid date: '{}'", self.lexeme()?),
+                where_: self.start_pos,
+            });
+        }
+        let second = std::str::from_utf8(&self.lexeme()?.as_bytes()[start + 6..=start + 7])
+            .map_err(|_| BlackDwarfError::ParseError {
+                why: "invalid utf-8".into(),
+                where_: self.start_pos,
+            })?;
 
         let (nanosecond, nanos_len) = if self.peek_char() == b'.' {
             self.advance_char();
@@ -1075,7 +1149,19 @@ impl<'a> Scanner<'a> {
                 self.advance_char();
             }
 
-            let lexeme = &self.lexeme()?[start + 8..];
+            if start + 8 >= self.lexeme()?.as_bytes().len() {
+                return Err(BlackDwarfError::ParseError {
+                    why: format!("invalid date: '{}'", self.lexeme()?),
+                    where_: self.start_pos,
+                });
+            }
+            let lexeme =
+                std::str::from_utf8(&self.lexeme()?.as_bytes()[start + 8..]).map_err(|_| {
+                    BlackDwarfError::ParseError {
+                        why: "invalid utf-8".into(),
+                        where_: self.start_pos,
+                    }
+                })?;
             let frac_secs = (String::from("0") + lexeme)
                 .parse::<f64>()
                 .map_err(|_| err("nanoseconds", lexeme))?;
@@ -1088,14 +1174,44 @@ impl<'a> Scanner<'a> {
             b'+' | b'-' => {
                 let sign = if self.advance_char() == b'+' { 1 } else { -1 };
 
+                if self.is_at_end() {
+                    return Err(BlackDwarfError::ParseError {
+                        why: format!("invalid date: '{}'", self.lexeme()?),
+                        where_: self.start_pos,
+                    });
+                }
                 next!();
                 next!();
                 next!();
-                let hour = &self.lexeme()?[start + nanos_len + 9..=start + nanos_len + 10];
+                if start + nanos_len + 10 >= self.lexeme()?.as_bytes().len() {
+                    return Err(BlackDwarfError::ParseError {
+                        why: format!("invalid date: '{}'", self.lexeme()?),
+                        where_: self.start_pos,
+                    });
+                }
+                let hour = std::str::from_utf8(
+                    &self.lexeme()?.as_bytes()[start + nanos_len + 9..=start + nanos_len + 10],
+                )
+                .map_err(|_| BlackDwarfError::ParseError {
+                    why: "invalid utf-8".into(),
+                    where_: self.start_pos,
+                })?;
 
                 next!();
                 next!(); // why not 3??
-                let minute = &self.lexeme()?[start + nanos_len + 12..=start + nanos_len + 13];
+                if start + nanos_len + 13 >= self.lexeme()?.as_bytes().len() {
+                    return Err(BlackDwarfError::ParseError {
+                        why: format!("invalid date: '{}'", self.lexeme()?),
+                        where_: self.start_pos,
+                    });
+                }
+                let minute = std::str::from_utf8(
+                    &self.lexeme()?.as_bytes()[start + nanos_len + 12..=start + nanos_len + 13],
+                )
+                .map_err(|_| BlackDwarfError::ParseError {
+                    why: "invalid utf-8".into(),
+                    where_: self.start_pos,
+                })?;
 
                 let hour_num = hour.parse::<i16>().map_err(|_| err("offset hour", hour))?;
                 if hour_num > 24 {

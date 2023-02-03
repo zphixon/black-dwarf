@@ -1,0 +1,25 @@
+#--{
+#--    "products": [
+#--        {
+#--            "name": "hammer",
+#--            "sku": 1,
+#--        },
+#--        {},
+#--        {
+#--            "name": "nail",
+#--            "color": "green",
+#--            "size": "little",
+#--        },
+#--    ],
+#--}
+
+[[products]]
+name = 'hammer'
+sku = 1
+
+[[products]]
+
+[[products]]
+name = 'nail'
+color = 'green'
+size = 'little'
