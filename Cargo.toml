@@ -2,9 +2,14 @@
 name = 'black-dwarf'
 version = '0.1.0'
 edition = '2021'
+default-run = 'black-dwarf'
 
 [dependencies]
 indexmap = '1.9.2'
 
 [dev-dependencies]
 diff = '0.1'
+
+[[bin]]
+path = 'src/from-stdin.rs'
+name = 'from-stdin'

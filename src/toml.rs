@@ -5,7 +5,7 @@
 
 use crate::BlackDwarfError;
 use indexmap::IndexMap;
-use std::{collections::VecDeque, time::Instant};
+use std::collections::VecDeque;
 
 pub enum Value<'doc> {
     Table {
@@ -495,7 +495,7 @@ fn parse_multiline_table<'doc>(
     let _rb = consume(scanner, TokenType::RightBracket)?;
 
     let mut current = &mut *top_level;
-    for (i, fragment) in path.iter().enumerate() {
+    for fragment in path.iter() {
         if current.is_array() {
             let type_ = current.type_str();
             current = current.as_list_mut().unwrap().last_mut().ok_or_else(|| {
@@ -1289,6 +1289,7 @@ impl<'a> Scanner<'a> {
         self.source[self.current - 1]
     }
 
+    #[allow(dead_code)]
     fn reverse_char(&mut self) -> u8 {
         self.current -= 1;
         self.source[self.current]
@@ -1302,6 +1303,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn lookahead_char(&mut self, n: usize) -> u8 {
         if self.is_at_end() || self.current + n >= self.source.len() {
             b'\0'
