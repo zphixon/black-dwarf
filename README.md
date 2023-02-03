@@ -46,14 +46,14 @@ the errors?
   - [X] +/- inf/nan
   - [ ] "decimal surrounded by at least one digit on each side"
   - [ ] sign in front of exponent in E notation
-- [ ] datetime (offset date-time, local date-time, local date, local time)
+- [X] datetime (offset date-time, local date-time, local date, local time)
 - [ ] correct string handling
   - [ ] multiline strings
   - [ ] string escapes
   - [ ] line-ending backslashes
   - [ ] stripping quotes from strings as key names
-- [ ] correct arrays
-  - [ ] subtables of array elements (this one's really stupid)
+- [X] correct arrays
+  - [X] subtables of array elements (this one's really stupid)
 
 ---
 

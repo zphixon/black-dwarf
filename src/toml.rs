@@ -165,6 +165,10 @@ impl<'doc> Value<'doc> {
         matches!(self, Value::Table { .. })
     }
 
+    pub fn is_array(&self) -> bool {
+        matches!(self, Value::Array { .. })
+    }
+
     pub fn is_just_date(&self) -> bool {
         matches!(
             self,
@@ -182,6 +186,13 @@ impl<'doc> Value<'doc> {
     pub fn as_list(&self) -> Option<&[Value]> {
         match self {
             Value::Array { values, .. } => Some(&values),
+            _ => None,
+        }
+    }
+
+    pub fn as_list_mut(&mut self) -> Option<&mut Vec<Value<'doc>>> {
+        match self {
+            Value::Array { values, .. } => Some(values),
             _ => None,
         }
     }
@@ -485,8 +496,16 @@ fn parse_multiline_table<'doc>(
 
     let mut current = &mut *top_level;
     for (i, fragment) in path.iter().enumerate() {
-        if !current.is_table() {
-            // TODO slightly confusing but correct error message if array_element
+        if current.is_array() {
+            let type_ = current.type_str();
+            current = current.as_list_mut().unwrap().last_mut().ok_or_else(|| {
+                BlackDwarfError::IncorrectType {
+                    type_,
+                    expected: "array",
+                    where_: fragment.pos,
+                }
+            })?;
+        } else if !current.is_table() {
             return Err(BlackDwarfError::IncorrectType {
                 type_: current.type_str(),
                 expected: "table",
@@ -520,8 +539,13 @@ fn parse_multiline_array_element<'doc>(
 
     let mut current = &mut *top_level;
     for (i, fragment) in path.iter().enumerate() {
-        if !current.is_table() {
-            // TODO slightly confusing but correct error message if array_element
+        if current.is_array() {
+            current = current
+                .as_list_mut()
+                .unwrap()
+                .last_mut()
+                .expect("unreachable?");
+        } else if !current.is_table() {
             return Err(BlackDwarfError::IncorrectType {
                 type_: current.type_str(),
                 expected: "table",
