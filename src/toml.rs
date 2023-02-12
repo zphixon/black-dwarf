@@ -51,6 +51,47 @@ pub struct Datetime {
     pub offset: Option<Offset>,
 }
 
+impl ToString for Datetime {
+    fn to_string(&self) -> String {
+        let mut s = String::new();
+
+        if let Some(date) = self.date {
+            s += &format!("{:04}-{:02}-{:02}", date.year, date.month, date.day);
+            if self.time.is_some() {
+                s += "T";
+            }
+        }
+
+        if let Some(time) = self.time {
+            s += &format!(
+                "{:02}:{:02}:{:02}.{:.03}",
+                time.hour,
+                time.minute,
+                time.second,
+                time.nanosecond as f32 / 1_000_000_000.0
+            );
+        }
+
+        if let Some(Offset::Z) = self.offset {
+            s += &format!("Z");
+        } else if let Some(Offset::Minutes(signed_minutes)) = self.offset {
+            let minutes = if signed_minutes.is_negative() {
+                s += "-";
+                -signed_minutes
+            } else {
+                s += "+";
+                signed_minutes
+            };
+            let hours = minutes as f64 / 60.;
+            let hours_trunc = hours as u16;
+            let minutes_trunc = (hours - hours_trunc as f64) * 60.;
+            s += &format!("{:02}:{:02}", hours_trunc, minutes_trunc);
+        }
+
+        s
+    }
+}
+
 impl std::fmt::Debug for Datetime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut debug_struct = f.debug_struct("Datetime");
@@ -270,9 +311,11 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
         if peeked.type_.may_be_key() {
             parse_kv(&mut scanner, &mut top_level, 0)?;
         } else if peeked.type_ == TokenType::LeftBracket {
-            parse_multiline_table(&mut scanner, &mut top_level, 0)?;
-        } else if peeked.type_ == TokenType::DoubleLeftBracket {
-            parse_multiline_array_element(&mut scanner, &mut top_level, 0)?;
+            if scanner.peek_token(1)?.type_ == TokenType::LeftBracket {
+                parse_multiline_array_element(&mut scanner, &mut top_level, 0)?;
+            } else {
+                parse_multiline_table(&mut scanner, &mut top_level, 0)?;
+            }
         } else {
             return Err(BlackDwarfError::ParseError {
                 why: format!("expected key or table header, got '{}'", peeked.lexeme),
@@ -420,6 +463,26 @@ fn parse_value<'doc>(
             pos: next.pos,
         }),
 
+        TokenType::Ident if next.lexeme == "inf" => Ok(Value::Float {
+            value: f64::INFINITY,
+            pos: next.pos,
+        }),
+
+        TokenType::Ident if next.lexeme == "nan" => Ok(Value::Float {
+            value: f64::NAN,
+            pos: next.pos,
+        }),
+
+        TokenType::Ident if next.lexeme == "true" => Ok(Value::Boolean {
+            value: true,
+            pos: next.pos,
+        }),
+
+        TokenType::Ident if next.lexeme == "false" => Ok(Value::Boolean {
+            value: false,
+            pos: next.pos,
+        }),
+
         _ => {
             return Err(BlackDwarfError::ParseError {
                 why: format!("not yet supported: {:?}", next),
@@ -533,9 +596,11 @@ fn parse_multiline_array_element<'doc>(
     depth: usize,
 ) -> Result<(), BlackDwarfError> {
     ensure!(depth, scanner);
-    let _dlb = consume(scanner, TokenType::DoubleLeftBracket)?;
+    let _lb = consume(scanner, TokenType::LeftBracket)?;
+    let _lb = consume(scanner, TokenType::LeftBracket)?;
     let path = parse_path(scanner)?;
-    let _drb = consume(scanner, TokenType::DoubleRightBracket)?;
+    let _rb = consume(scanner, TokenType::RightBracket)?;
+    let _rb = consume(scanner, TokenType::RightBracket)?;
 
     let mut current = &mut *top_level;
     for (i, fragment) in path.iter().enumerate() {
@@ -568,7 +633,7 @@ fn parse_multiline_array_element<'doc>(
         return Err(BlackDwarfError::IncorrectType {
             type_: current.type_str(),
             expected: "array",
-            where_: _dlb.pos,
+            where_: _lb.pos,
         });
     }
 
@@ -670,13 +735,9 @@ pub enum TokenType {
 
     /// [
     LeftBracket,
-    /// [[
-    DoubleLeftBracket,
 
     /// ]
     RightBracket,
-    /// ]]
-    DoubleRightBracket,
 
     /// {
     LeftBrace,
@@ -696,16 +757,14 @@ impl TokenType {
     }
 
     fn is_bracket(&self) -> bool {
-        matches!(self, TokenType::LeftBracket | TokenType::DoubleLeftBracket)
+        matches!(self, TokenType::LeftBracket)
     }
 
     fn may_be_key(&self) -> bool {
         !matches!(
             self,
             TokenType::LeftBracket
-                | TokenType::DoubleLeftBracket
                 | TokenType::RightBracket
-                | TokenType::DoubleRightBracket
                 | TokenType::LeftBrace
                 | TokenType::RightBrace
                 | TokenType::Equals
@@ -792,30 +851,18 @@ impl<'a> Scanner<'a> {
             b',' => TokenType::Comma,
             b'.' => TokenType::Dot,
             b'=' => TokenType::Equals,
-
-            b'[' => {
-                if self.peek_char() == b'[' {
-                    self.advance_char();
-                    TokenType::DoubleLeftBracket
-                } else {
-                    TokenType::LeftBracket
-                }
-            }
-
-            b']' => {
-                if self.peek_char() == b']' {
-                    self.advance_char();
-                    TokenType::DoubleRightBracket
-                } else {
-                    TokenType::RightBracket
-                }
-            }
+            b'[' => TokenType::LeftBracket,
+            b']' => TokenType::RightBracket,
 
             c if c.is_ascii_digit() => self.number()?,
             b'+' => self.number()?,
             b'-' => {
                 if self.peek_char().is_ascii_digit() {
                     self.number()?
+                } else if self.peek_char() == b'n' {
+                    self.nan(true)?
+                } else if self.peek_char() == b'i' {
+                    self.inf(true)?
                 } else {
                     self.ident()?
                 }
@@ -824,9 +871,7 @@ impl<'a> Scanner<'a> {
             c @ (b'"' | b'\'') => self.scan_string(c)?,
 
             c => {
-                if c.is_ascii_digit() {
-                    self.number()?
-                } else if is_whitespace(c) {
+                if is_whitespace(c) {
                     panic!("found whitespace where there shouldn't be any");
                 } else {
                     self.ident()?
@@ -963,16 +1008,7 @@ impl<'a> Scanner<'a> {
             self.advance_char();
         }
 
-        let lexeme = self.lexeme()?;
-        if let Some(keyword) = into_keyword(lexeme) {
-            Ok(keyword)
-        } else if let Ok(integer) = lexeme.parse() {
-            Ok(TokenType::Integer(integer))
-        } else if let Ok(float) = lexeme.parse() {
-            Ok(TokenType::Float(float))
-        } else {
-            Ok(TokenType::Ident)
-        }
+        Ok(TokenType::Ident)
     }
 
     fn scan_string(&mut self, quote: u8) -> Result<TokenType, BlackDwarfError> {
@@ -1037,7 +1073,7 @@ impl<'a> Scanner<'a> {
             }
         })?;
 
-        let time = if self.peek_char() == b'T' {
+        let time = if self.peek_char() == b'T' || self.peek_char() == b't' {
             next!();
             while self.peek_char().is_ascii_digit() {
                 self.advance_char();
@@ -1227,7 +1263,7 @@ impl<'a> Scanner<'a> {
 
                 Some(Offset::Minutes(sign * (hour_num * 60 + minute_num)))
             }
-            b'Z' => {
+            b'Z' | b'z' => {
                 self.advance_char();
                 Some(Offset::Z)
             }
@@ -1419,14 +1455,6 @@ fn is_non_identifier(c: u8) -> bool {
         || c == b'='
         || c == b'"'
         || c == b'\''
-}
-
-fn into_keyword(s: &str) -> Option<TokenType> {
-    match s {
-        "true" => Some(TokenType::Boolean(true)),
-        "false" => Some(TokenType::Boolean(false)),
-        _ => None,
-    }
 }
 
 #[test]

@@ -15,33 +15,81 @@ trait ToJson {
 
 impl ToJson for black_dwarf::toml::Value<'_> {
     fn to_json(self: Self) -> String {
-        use black_dwarf::toml::Value::*;
+        use black_dwarf::toml::{Datetime, Value};
         match self {
-            Table { key_values, .. } => {
-                let mut s: std::string::String = "{".into();
-                for (k, v) in key_values {
-                    s += &format!("\"{}\": {},", k, v.to_json());
+            Value::Table { key_values, .. } => {
+                let mut s: String = "{".into();
+                let len = key_values.len();
+                for (i, (k, v)) in key_values.into_iter().enumerate() {
+                    s += &format!("\"{}\": {}", k, v.to_json());
+                    if i + 1 != len {
+                        s += ",";
+                    }
                 }
                 s += "}";
                 s
             }
 
-            Array { values, .. } => {
-                let mut s: std::string::String = "[".into();
-                for v in values {
+            Value::Array { values, .. } => {
+                let mut s: String = "[".into();
+                let len = values.len();
+                for (i, v) in values.into_iter().enumerate() {
                     s += &v.to_json();
-                    s += ",";
+                    if i + 1 != len {
+                        s += ",";
+                    }
                 }
                 s += "]";
                 s
             }
 
-            String { value, .. } => format!("{{\"type\":\"string\",\"value\":\"{}\"}}", value),
-            Integer { value, .. } => format!("{{\"type\":\"integer\",\"value\":\"{}\":\"}}", value),
-            Float { value, .. } => format!("{{\"type\":\"float\",\"value\":\"{}\":\"}}", value),
-            Boolean { value, .. } => format!("{{\"type\":\"bool\",\"value\":\"{}\":\"}}", value),
+            Value::String { value, .. } => {
+                format!("{{\"type\":\"string\",\"value\":\"{}\"}}", value)
+            }
+            Value::Integer { value, .. } => {
+                format!("{{\"type\":\"integer\",\"value\":\"{}\"}}", value)
+            }
+            Value::Float { value, .. } => {
+                if !value.is_nan() {
+                    format!("{{\"type\":\"float\",\"value\":\"{}\"}}", value)
+                } else {
+                    format!("{{\"type\":\"float\",\"value\":\"nan\"}}")
+                }
+            }
+            Value::Boolean { value, .. } => {
+                format!("{{\"type\":\"bool\",\"value\":\"{}\"}}", value)
+            }
 
-            Datetime { datetime, .. } => "{\"todo\":true}".into(),
+            Value::Datetime { datetime, .. } => {
+                let value = datetime.to_string();
+                match datetime {
+                    Datetime {
+                        date: Some(_),
+                        time: Some(_),
+                        offset: Some(_),
+                    } => format!("{{\"type\":\"datetime\",\"value\":\"{}\"}}", value),
+
+                    Datetime {
+                        date: Some(_),
+                        time: Some(_),
+                        offset: None,
+                    } => format!("{{\"type\":\"datetime-local\",\"value\":\"{}\"}}", value),
+
+                    Datetime {
+                        date: Some(_),
+                        time: None,
+                        offset: None,
+                    } => format!("{{\"type\":\"date-local\",\"value\":\"{}\"}}", value),
+
+                    Datetime {
+                        date: None,
+                        time: Some(_),
+                        offset: None,
+                    } => format!("{{\"type\":\"time-local\",\"value\":\"{}\"}}", value),
+
+                    _ => unreachable!(),
+                }
+            }
         }
     }
 }
