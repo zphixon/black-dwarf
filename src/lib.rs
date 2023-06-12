@@ -1,6 +1,6 @@
 use crate::toml::Pos;
 use indexmap::IndexMap;
-use toml::Value;
+use toml::{Value, ScanError};
 
 pub mod toml;
 
@@ -31,6 +31,8 @@ pub enum BlackDwarfError {
         why: String,
         where_: Pos,
     },
+
+    SomeError(ScanError)
 }
 
 #[derive(Debug)]

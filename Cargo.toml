@@ -6,6 +6,7 @@ default-run = 'black-dwarf'
 
 [dependencies]
 indexmap = '1.9.2'
+unicode-segmentation = '1.10.1'
 
 [dev-dependencies]
 diff = '0.1'

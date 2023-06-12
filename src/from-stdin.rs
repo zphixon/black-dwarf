@@ -4,9 +4,16 @@ fn main() -> Result<(), ()> {
     let mut buf = Vec::new();
     std::io::stdin().read_to_end(&mut buf).map_err(|_| ())?;
     let s = String::from_utf8(buf).map_err(|_| ())?;
-    let toml = black_dwarf::toml::parse(&s).unwrap();
+    match black_dwarf::toml::parse(&s) {
+        Ok(toml) =>  {
     println!("{}", toml.to_json());
     Ok(())
+        }
+        Err(err) => {
+            println!("{:?}", err);
+            Err(())
+        }
+    }
 }
 
 trait ToJson {
