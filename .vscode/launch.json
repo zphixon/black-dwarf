@@ -1,0 +1,103 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'black-dwarf'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=black-dwarf"
+                ],
+                "filter": {
+                    "name": "black-dwarf",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'from-stdin'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=from-stdin",
+                    "--package=black-dwarf"
+                ],
+                "filter": {
+                    "name": "from-stdin",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "tests/toml/rude_comments.toml"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'from-stdin'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=from-stdin",
+                    "--package=black-dwarf"
+                ],
+                "filter": {
+                    "name": "from-stdin",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'black-dwarf'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=black-dwarf",
+                    "--package=black-dwarf"
+                ],
+                "filter": {
+                    "name": "black-dwarf",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'black-dwarf'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=black-dwarf",
+                    "--package=black-dwarf"
+                ],
+                "filter": {
+                    "name": "black-dwarf",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

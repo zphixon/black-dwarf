@@ -2,15 +2,25 @@ use std::io::Read;
 
 fn main() -> Result<(), ()> {
     let mut buf = Vec::new();
-    std::io::stdin().read_to_end(&mut buf).map_err(|_| ())?;
-    let s = String::from_utf8(buf).map_err(|_| ())?;
+    let s;
+
+    if let Some(filename) = std::env::args().nth(1) {
+        s = std::fs::read_to_string(filename).map_err(|_| ())?;
+    } else {
+        std::io::stdin().read_to_end(&mut buf).map_err(|_| ())?;
+        s = String::from_utf8(buf).map_err(|_| ())?;
+    }
+
     match black_dwarf::toml::parse(&s) {
-        Ok(toml) =>  {
-    println!("{}", toml.to_json());
-    Ok(())
+        Ok(toml) => {
+            println!("{}", toml.to_json());
+            Ok(())
         }
         Err(err) => {
             println!("{:?}", err);
+            if std::env::args().any(|arg| arg == "--show-tokens-if-parse-failed") {
+                println!("{:#?}", black_dwarf::toml::scan(&s));
+            }
             Err(())
         }
     }
@@ -51,20 +61,23 @@ impl ToJson for black_dwarf::toml::Value<'_> {
             }
 
             Value::String { value, .. } => {
-                format!("{{\"type\":\"string\",\"value\":\"{}\"}}", value)
+                format!(
+                    "{{\"type\":\n\"string\",\"value\":\"{}\"}}",
+                    value.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\""),
+                )
             }
             Value::Integer { value, .. } => {
-                format!("{{\"type\":\"integer\",\"value\":\"{}\"}}", value)
+                format!("{{\"type\":\n\"integer\",\"value\":\"{}\"}}", value)
             }
             Value::Float { value, .. } => {
                 if !value.is_nan() {
-                    format!("{{\"type\":\"float\",\"value\":\"{}\"}}", value)
+                    format!("{{\"type\":\n\"float\",\"value\":\"{}\"}}", value)
                 } else {
-                    format!("{{\"type\":\"float\",\"value\":\"nan\"}}")
+                    format!("{{\"type\":\n\"float\",\"value\":\"nan\"}}")
                 }
             }
             Value::Boolean { value, .. } => {
-                format!("{{\"type\":\"bool\",\"value\":\"{}\"}}", value)
+                format!("{{\"type\":\n\"bool\",\"value\":\"{}\"}}", value)
             }
 
             Value::Datetime { datetime, .. } => {
@@ -74,25 +87,25 @@ impl ToJson for black_dwarf::toml::Value<'_> {
                         date: Some(_),
                         time: Some(_),
                         offset: Some(_),
-                    } => format!("{{\"type\":\"datetime\",\"value\":\"{}\"}}", value),
+                    } => format!("{{\"type\":\n\"datetime\",\"value\":\"{}\"}}", value),
 
                     Datetime {
                         date: Some(_),
                         time: Some(_),
                         offset: None,
-                    } => format!("{{\"type\":\"datetime-local\",\"value\":\"{}\"}}", value),
+                    } => format!("{{\"type\":\n\"datetime-local\",\"value\":\"{}\"}}", value),
 
                     Datetime {
                         date: Some(_),
                         time: None,
                         offset: None,
-                    } => format!("{{\"type\":\"date-local\",\"value\":\"{}\"}}", value),
+                    } => format!("{{\"type\":\n\"date-local\",\"value\":\"{}\"}}", value),
 
                     Datetime {
                         date: None,
                         time: Some(_),
                         offset: None,
-                    } => format!("{{\"type\":\"time-local\",\"value\":\"{}\"}}", value),
+                    } => format!("{{\"type\":\n\"time-local\",\"value\":\"{}\"}}", value),
 
                     _ => unreachable!(),
                 }

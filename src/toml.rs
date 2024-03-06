@@ -5,7 +5,7 @@
 
 use crate::BlackDwarfError;
 use indexmap::IndexMap;
-use std::iter::Peekable;
+use std::{collections::VecDeque, iter::Peekable, num::ParseIntError, str::FromStr};
 use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
 pub enum Value<'doc> {
@@ -20,7 +20,8 @@ pub enum Value<'doc> {
     },
 
     String {
-        value: &'doc str,
+        quote_type: QuoteType,
+        value: String,
         pos: Pos,
     },
 
@@ -43,6 +44,14 @@ pub enum Value<'doc> {
         datetime: Datetime,
         pos: Pos,
     },
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum QuoteType {
+    Single,
+    Double,
+    TripleSingle,
+    TripleDouble,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -123,6 +132,43 @@ pub struct Date {
     pub year: u16,
     pub month: u8,
     pub day: u8,
+}
+
+impl FromStr for Date {
+    type Err = ScanError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts = s
+            .split("-")
+            .map(|part| part.parse::<u16>())
+            .collect::<Result<Vec<_>, ParseIntError>>()
+            .map_err(|_| ScanError::InvalidDate)?;
+
+        let [year, month, day] = parts[..] else {
+            return Err(ScanError::InvalidDate);
+        };
+
+        if year > 9999 || !(1..12).contains(&month) || !(1..31).contains(&day) {
+            return Err(ScanError::InvalidDate);
+        }
+
+        if matches!(month, 2 | 4 | 6 | 9 | 11) || day == 31 {
+            return Err(ScanError::InvalidDate);
+        }
+
+        if month == 2 && day == 30 {
+            return Err(ScanError::InvalidDate);
+        }
+
+        let is_leap_year = year % 4 == 0 || (year % 100 != 0 && year % 400 == 0);
+        if month == 2 && day == 29 && !is_leap_year {
+            return Err(ScanError::InvalidDate);
+        }
+
+        let month = month.try_into().map_err(|_| ScanError::InvalidDate)?;
+        let day = day.try_into().map_err(|_| ScanError::InvalidDate)?;
+
+        Ok(Date { year, month, day })
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -239,9 +285,9 @@ impl<'doc> Value<'doc> {
         }
     }
 
-    pub fn as_str(&self) -> Option<&'doc str> {
+    pub fn as_str(&'doc self) -> Option<&'doc str> {
         match self {
-            Value::String { value, .. } => Some(value),
+            Value::String { value, .. } => Some(value.as_str()),
             _ => None,
         }
     }
@@ -304,7 +350,7 @@ pub fn scan(doc: &str) -> Result<Vec<Token>, BlackDwarfError> {
     loop {
         let token = scanner.next_token();
         match token.type_ {
-            TokenType::Error(error) => return Err(BlackDwarfError::SomeError(error)),
+            TokenType::Error(error, pos) => return Err(BlackDwarfError::SomeError(error, pos)),
             TokenType::Eof => break,
             _ => tokens.push(token),
         }
@@ -322,9 +368,11 @@ pub fn parse(doc: &str) -> Result<Value, BlackDwarfError> {
         if peeked.type_.may_be_key() {
             parse_kv(&mut scanner, &mut top_level, 0)?;
         } else if peeked.type_ == TokenType::LeftBracket {
-            parse_multiline_table(&mut scanner, &mut top_level, 0)?;
-        } else if scanner.peek_token().type_ == TokenType::DoubleLeftBracket {
-            parse_multiline_array_element(&mut scanner, &mut top_level, 0)?;
+            if scanner.peek_nth(1).type_ == TokenType::LeftBracket {
+                parse_multiline_array_element(&mut scanner, &mut top_level, 0)?;
+            } else {
+                parse_multiline_table(&mut scanner, &mut top_level, 0)?;
+            }
         } else {
             return Err(BlackDwarfError::ParseError {
                 why: format!("expected key or table header, got '{}'", peeked.lexeme),
@@ -373,12 +421,10 @@ fn parse_kv<'doc>(
         } = value
         {
             let Token {
-                type_: TokenType::Time {
-                    time,
-                    offset,
-                },
+                type_: TokenType::Time { time, offset },
                 ..
-            } = scanner.next_token() else {
+            } = scanner.next_token()
+            else {
                 unreachable!()
             };
 
@@ -429,10 +475,72 @@ fn parse_value<'doc>(
 
         TokenType::LeftBrace => parse_table(scanner, depth),
 
-        TokenType::String => Ok(Value::String {
-            value: &next.lexeme[1..next.lexeme.len() - 1],
-            pos: next.pos,
-        }),
+        TokenType::String(quote_type) => {
+            let len = match quote_type {
+                QuoteType::Single | QuoteType::Double => 1,
+                QuoteType::TripleSingle | QuoteType::TripleDouble => 3,
+            };
+
+            let part = &next.lexeme[len..next.lexeme.len() - len];
+            let value = part.replace("\\\"", "\"").replace("\\\\", "\\");
+
+            Ok(Value::String {
+                quote_type,
+                value: String::from(&next.lexeme[len..next.lexeme.len() - len]),
+                pos: next.pos,
+            })
+        }
+
+        TokenType::Plus => {
+            let peek = scanner.peek_token();
+            match peek.type_ {
+                TokenType::Ident if peek.lexeme == "inf" => parse_value(scanner, depth),
+                TokenType::Ident if peek.lexeme == "nan" => parse_value(scanner, depth),
+                TokenType::Integer(_) | TokenType::Float(_) => parse_value(scanner, depth),
+                _ => Err(BlackDwarfError::ParseError {
+                    why: format!("Expecting integer, float, nan, or inf after +"),
+                    where_: next.pos,
+                }),
+            }
+        }
+
+        TokenType::Minus => {
+            let peek = scanner.peek_token();
+            match peek.type_ {
+                TokenType::Integer(int) => {
+                    scanner.next_token();
+                    Ok(Value::Integer {
+                        value: -int,
+                        pos: peek.pos,
+                    })
+                }
+                TokenType::Float(float) => {
+                    scanner.next_token();
+                    Ok(Value::Float {
+                        value: -float,
+                        pos: peek.pos,
+                    })
+                }
+                TokenType::Ident if peek.lexeme == "inf" => {
+                    scanner.next_token();
+                    Ok(Value::Float {
+                        value: f64::NEG_INFINITY,
+                        pos: peek.pos,
+                    })
+                }
+                TokenType::Ident if peek.lexeme == "nan" => {
+                    scanner.next_token();
+                    Ok(Value::Float {
+                        value: f64::NAN,
+                        pos: peek.pos,
+                    })
+                }
+                _ => Err(BlackDwarfError::ParseError {
+                    why: format!("Expecting integer, float, nan, or inf after -"),
+                    where_: next.pos,
+                }),
+            }
+        }
 
         TokenType::Integer(value) => Ok(Value::Integer {
             value,
@@ -567,7 +675,16 @@ fn parse_multiline_table<'doc>(
     let _rb = consume(scanner, TokenType::RightBracket)?;
 
     let mut current = &mut *top_level;
-    for fragment in path.iter() {
+    for fragment in path.into_iter() {
+        let fragment = if fragment.lexeme.starts_with("\"") && fragment.lexeme.ends_with("\"") {
+            Token {
+                lexeme: &fragment.lexeme[1..fragment.lexeme.len() - 1],
+                ..fragment
+            }
+        } else {
+            fragment
+        };
+
         if current.is_array() {
             let type_ = current.type_str();
             current = current.as_list_mut().unwrap().last_mut().ok_or_else(|| {
@@ -605,9 +722,11 @@ fn parse_multiline_array_element<'doc>(
     depth: usize,
 ) -> Result<(), BlackDwarfError> {
     ensure!(depth, scanner);
-    let _dlb = consume(scanner, TokenType::DoubleLeftBracket)?;
+    let _dlb = consume(scanner, TokenType::LeftBracket)?;
+    let _dlb = consume(scanner, TokenType::LeftBracket)?;
     let path = parse_path(scanner)?;
-    let _drb = consume(scanner, TokenType::DoubleRightBracket)?;
+    let _drb = consume(scanner, TokenType::RightBracket)?;
+    let _drb = consume(scanner, TokenType::RightBracket)?;
 
     let mut current = &mut *top_level;
     for (i, fragment) in path.iter().enumerate() {
@@ -676,6 +795,21 @@ fn consume_key<'doc>(scanner: &mut Scanner<'doc>) -> Result<Token<'doc>, BlackDw
     }
 }
 
+fn consume_no_slurp<'doc>(
+    scanner: &mut Scanner<'doc>,
+    type_: TokenType,
+) -> Result<Token<'doc>, BlackDwarfError> {
+    let tok = scanner.next_token();
+    if tok.type_ == type_ {
+        Ok(tok)
+    } else {
+        Err(BlackDwarfError::ParseError {
+            why: format!("expected {:?}, got '{}'", type_, tok.lexeme),
+            where_: tok.pos,
+        })
+    }
+}
+
 fn consume<'doc>(
     scanner: &mut Scanner<'doc>,
     type_: TokenType,
@@ -697,7 +831,7 @@ impl From<BlackDwarfError> for Vec<BlackDwarfError> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Pos {
     pub line: usize,
     pub col: usize,
@@ -717,6 +851,7 @@ pub enum ScanError {
     UnterminatedString,
     InvalidDate,
     InvalidTime,
+    IncorrectQuoteNumber,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -724,7 +859,7 @@ pub enum TokenType {
     Integer(i64),
     Float(f64),
     Boolean(bool),
-    String,
+    String(QuoteType),
     Datetime(Datetime),
     Date(Date),
     Time {
@@ -736,25 +871,20 @@ pub enum TokenType {
 
     /// [
     LeftBracket,
-    /// [[
-    DoubleLeftBracket,
-
     /// ]
     RightBracket,
-    /// ]]
-    DoubleRightBracket,
-
     /// {
     LeftBrace,
-
     /// }
     RightBrace,
 
     Equals,
     Dot,
     Comma,
+    Minus,
+    Plus,
 
-    Error(ScanError),
+    Error(ScanError, Pos),
     Eof,
 }
 
@@ -764,7 +894,7 @@ impl TokenType {
     }
 
     fn is_bracket(&self) -> bool {
-        matches!(self, TokenType::LeftBracket | TokenType::DoubleLeftBracket)
+        matches!(self, TokenType::LeftBracket)
     }
 
     fn may_be_key(&self) -> bool {
@@ -772,8 +902,6 @@ impl TokenType {
             self,
             TokenType::LeftBracket
                 | TokenType::RightBracket
-                | TokenType::DoubleLeftBracket
-                | TokenType::DoubleRightBracket
                 | TokenType::LeftBrace
                 | TokenType::RightBrace
                 | TokenType::Equals
@@ -787,7 +915,7 @@ impl TokenType {
 pub struct Scanner<'doc> {
     graphemes: Peekable<Graphemes<'doc>>,
 
-    current: Option<Token<'doc>>,
+    stream: VecDeque<Token<'doc>>,
 
     line: usize,
     column: usize,
@@ -802,7 +930,7 @@ impl<'doc> Scanner<'doc> {
         Self {
             graphemes: source.graphemes(true).peekable(),
 
-            current: None,
+            stream: Default::default(),
 
             line: 1,
             column: 0,
@@ -833,7 +961,7 @@ impl<'doc> Scanner<'doc> {
     }
 
     pub fn next_token(&mut self) -> Token<'doc> {
-        if let Some(current) = self.current.take() {
+        if let Some(current) = self.stream.pop_front() {
             return current;
         }
 
@@ -841,26 +969,41 @@ impl<'doc> Scanner<'doc> {
     }
 
     pub fn peek_token(&mut self) -> Token<'doc> {
-        if let Some(current) = self.current.clone() {
-            return current;
-        }
-
-        self.current = Some(self.next());
-        self.current.clone().unwrap()
+        self.peek_nth(0)
     }
 
-    fn slurp_whitespace(&mut self) {
+    pub fn peek_nth(&mut self, n: usize) -> Token<'doc> {
+        if let Some(current) = self.stream.iter().nth(n) {
+            return current.clone();
+        }
+
+        while self.stream.len() <= n {
+            let next = self.next();
+            self.stream.push_back(next);
+        }
+
+        self.stream.iter().nth(n).unwrap().clone()
+    }
+
+    fn slurp_whitespace(&mut self) -> bool {
+        let mut slurped = false;
         while let Some(true) = self
             .graphemes
             .peek()
             .map(|s| s.as_bytes().iter().all(u8::is_ascii_whitespace))
         {
             let _ = self.next_grapheme();
+            slurped = true;
         }
+        slurped
     }
 
     fn next_type(&mut self) -> TokenType {
-        self.slurp_whitespace();
+        if self.slurp_whitespace() {
+            self.start_byte += self.len_bytes;
+            self.len_bytes = 0;
+        }
+
         if self.peek_grapheme() == "" {
             return TokenType::Eof;
         }
@@ -875,41 +1018,17 @@ impl<'doc> Scanner<'doc> {
                 self.next_type()
             }
 
+            "+" => TokenType::Plus,
+            "-" => TokenType::Minus,
             "{" => TokenType::LeftBrace,
             "}" => TokenType::RightBrace,
             "," => TokenType::Comma,
             "." => TokenType::Dot,
             "=" => TokenType::Equals,
-            "[" => {
-                if self.peek_grapheme() == "[" {
-                    self.next_grapheme();
-                    TokenType::DoubleLeftBracket
-                } else {
-                    TokenType::LeftBracket
-                }
-            }
-            "]" => {
-                if self.peek_grapheme() == "]" {
-                    self.next_grapheme();
-                    TokenType::DoubleRightBracket
-                } else {
-                    TokenType::RightBracket
-                }
-            }
+            "[" => TokenType::LeftBracket,
+            "]" => TokenType::RightBracket,
 
-            digit if is_digit(digit) => self.number(),
-            "+" => self.number(),
-            "-" => {
-                if is_digit(&self.peek_grapheme()) {
-                    self.number()
-                } else if self.peek_grapheme() == "n" {
-                    self.nan(true)
-                } else if self.peek_grapheme() == "i" {
-                    self.inf(true)
-                } else {
-                    self.ident()
-                }
-            }
+            digit if is_digit(digit, 10) => self.number_date_time(),
 
             c @ ("\"" | "'") => self.scan_string(c),
 
@@ -929,11 +1048,15 @@ impl<'doc> Scanner<'doc> {
         Token {
             type_,
             lexeme: self.lexeme(),
-            pos: Pos {
-                line: self.line,
-                col: self.column,
-                byte: self.start_byte,
-            },
+            pos: self.pos(),
+        }
+    }
+
+    fn pos(&self) -> Pos {
+        Pos {
+            line: self.line,
+            col: self.column,
+            byte: self.start_byte,
         }
     }
 
@@ -941,114 +1064,75 @@ impl<'doc> Scanner<'doc> {
         self.peek_grapheme() == ""
     }
 
-    fn nan(&mut self, negative: bool) -> TokenType {
-        self.next_grapheme();
-        if self.is_at_end() {
-            return TokenType::Ident;
-        }
-        let a = self.next_grapheme();
-        if self.is_at_end() {
-            return TokenType::Ident;
-        }
-        let n = self.next_grapheme();
-        if self.is_at_end() {
-            return TokenType::Ident;
-        }
-        match (negative, a, n) {
-            (false, "a", "n") => return TokenType::Float(f64::NAN),
-            (true, "a", "n") => return TokenType::Float(-f64::NAN),
-            _ => {
-                return TokenType::Error(ScanError::InvalidNumber);
-            }
-        }
-    }
-
-    fn inf(&mut self, negative: bool) -> TokenType {
-        self.next_grapheme();
-        if self.is_at_end() {
-            return TokenType::Ident;
-        }
-        let n = self.next_grapheme();
-        if self.is_at_end() {
-            return TokenType::Ident;
-        }
-        let f = self.next_grapheme();
-        if self.is_at_end() {
-            return TokenType::Ident;
-        }
-        match (negative, n, f) {
-            (false, "n", "f") => return TokenType::Float(f64::INFINITY),
-            (true, "f", "f") => return TokenType::Float(f64::NEG_INFINITY),
-            _ => {
-                return TokenType::Error(ScanError::InvalidNumber);
-            }
-        }
-    }
-
-    fn number(&mut self) -> TokenType {
-        let signed = if self.peek_grapheme() == "+" || self.peek_grapheme() == "-" {
-            let negative = self.peek_grapheme() == "-";
+    fn number_date_time(&mut self) -> TokenType {
+        while is_digit(self.peek_grapheme(), 16)
+            || ["x", "o", "b", "T", "Z", "-", ":", "+", "e", "E", "_", "."]
+                .contains(&self.peek_grapheme())
+        {
             self.next_grapheme();
-            Some(negative)
-        } else {
-            None
-        };
-
-        if self.peek_grapheme() == "n" {
-            return self.nan(signed.unwrap_or_default());
         }
 
-        if self.peek_grapheme() == "i" {
-            return self.inf(signed.unwrap_or_default());
-        }
+        let with_no_underscores = self.lexeme().replace("_", "");
 
-        match self.peek_grapheme() {
-            "x" => return self.hex(signed.unwrap_or_default()),
-            "o" => return self.octal(signed.unwrap_or_default()),
-            "b" => return self.binary(signed.unwrap_or_default()),
+        match with_no_underscores
+            .graphemes(true)
+            .take(2)
+            .collect::<Vec<_>>()[..]
+        {
+            ["0", base @ "x" | base @ "o" | base @ "b"] => {
+                let base = match base {
+                    "b" => 2,
+                    "o" => 8,
+                    "x" => 16,
+                    _ => unreachable!(),
+                };
+
+                let mut graphemes = with_no_underscores[2..].graphemes(true).peekable();
+                let mut num = 0;
+                while let Some(digit) = graphemes.peek() {
+                    if !is_digit(digit, base) {
+                        break;
+                    }
+                    num *= base as i64;
+                    num += to_digit(digit, base);
+                    graphemes.next();
+                }
+
+                return TokenType::Integer(num);
+            }
+
             _ => {}
         }
 
-        let mut has_underscore = false;
-        while dec_or_underscore(self.peek_grapheme(), &mut has_underscore) {
-            self.next_grapheme();
-        }
-
-        if self.peek_grapheme() == "-" && self.lexeme().len() == 4 && signed.is_none() {
-            return self.date();
-        }
-
-        if self.peek_grapheme() == ":" && self.lexeme().len() == 2 && signed.is_none() {
-            return self.time(0);
-        }
-
-        if self.peek_grapheme() == "." {
-            self.next_grapheme();
-            while dec_or_underscore(self.peek_grapheme(), &mut has_underscore) {
-                self.next_grapheme();
-            }
-        }
-
-        if self.peek_grapheme() == "e" || self.peek_grapheme() == "E" {
-            self.next_grapheme();
-            while dec_or_underscore(self.peek_grapheme(), &mut has_underscore) {
-                self.next_grapheme();
-            }
-        }
-
-        let lexeme = self.lexeme();
-        let to_parse = if has_underscore {
-            lexeme.replace("_", "")
-        } else {
-            lexeme.to_string()
-        };
-
-        if let Ok(integer) = to_parse.parse() {
+        if let Ok(integer) = with_no_underscores.parse::<i64>() {
             TokenType::Integer(integer)
-        } else if let Ok(float) = to_parse.parse() {
+        } else if let Ok(float) = with_no_underscores.parse::<f64>() {
             TokenType::Float(float)
+        } else if let Ok(date) = self.lexeme().parse::<Date>() {
+            TokenType::Date(date)
+        } else if let Ok(date) = speedate::DateTime::parse_str(self.lexeme()) {
+            TokenType::Datetime(Datetime {
+                date: Some(Date {
+                    year: date.date.year,
+                    month: date.date.month,
+                    day: date.date.day,
+                }),
+                time: Some(Time {
+                    hour: date.time.hour,
+                    minute: date.time.minute,
+                    second: date.time.second,
+                    nanosecond: date.time.microsecond * 1000,
+                }),
+                offset: date.time.tz_offset.map(|seconds| {
+                    if seconds == 0 {
+                        Offset::Z
+                    } else {
+                        Offset::Minutes((seconds / 60i32) as i16)
+                    }
+                }),
+            })
         } else {
-            TokenType::Error(ScanError::InvalidNumber)
+            TokenType::Error(ScanError::InvalidNumber, self.pos())
         }
     }
 
@@ -1067,9 +1151,11 @@ impl<'doc> Scanner<'doc> {
             num_quotes += 1;
         }
 
-        while self.peek_grapheme() != quote && !self.is_at_end() {
-            if self.peek_grapheme() == "\n" {}
+        if num_quotes == 2 {
+            return TokenType::Error(ScanError::IncorrectQuoteNumber, self.pos());
+        }
 
+        while self.peek_grapheme() != quote && !self.is_at_end() {
             if self.peek_grapheme() == "\\" && quote == "\"" {
                 self.next_grapheme();
             }
@@ -1080,7 +1166,7 @@ impl<'doc> Scanner<'doc> {
         }
 
         if self.is_at_end() {
-            TokenType::Error(ScanError::UnterminatedString)
+            TokenType::Error(ScanError::UnterminatedString, self.pos())
         } else {
             self.next_grapheme();
 
@@ -1090,204 +1176,19 @@ impl<'doc> Scanner<'doc> {
                 num_quotes += 1;
             }
 
-            TokenType::String
-        }
-    }
-
-    fn date(&mut self) -> TokenType {
-        macro_rules! next {
-            () => {
-                self.next_grapheme();
-                if self.is_at_end() {
-                    return TokenType::Error(ScanError::InvalidDate);
-                }
-            };
-        }
-
-        let year = self.lexeme();
-
-        next!();
-        next!();
-        next!();
-        let Ok(month) = std::str::from_utf8(&self.lexeme().as_bytes()[5..=6]) else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        next!();
-        next!();
-        next!();
-        let Ok(day) = std::str::from_utf8(&self.lexeme().as_bytes()[8..=9]) else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        let time = if self.peek_grapheme() == "T" || self.peek_grapheme() == "t" {
-            next!();
-            while is_digit(self.peek_grapheme()) {
-                self.next_grapheme();
+            if num_quotes == 2 {
+                return TokenType::Error(ScanError::IncorrectQuoteNumber, self.pos());
             }
-            Some(self.time(11))
-        } else {
-            None
-        };
 
-        let Ok(year) = year.parse() else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        let Ok(month) = month.parse() else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        let Ok(day) = day.parse() else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        let date = Date { year, month, day };
-        if let Some(TokenType::Time { time, offset }) = time {
-            TokenType::Datetime(Datetime {
-                date: Some(date),
-                time: Some(time),
-                offset,
+            TokenType::String(if num_quotes == 1 && quote == "'" {
+                QuoteType::Single
+            } else if num_quotes == 1 && quote == "\"" {
+                QuoteType::Double
+            } else if quote == "'" {
+                QuoteType::TripleSingle
+            } else {
+                QuoteType::TripleDouble
             })
-        } else {
-            TokenType::Date(date)
-        }
-    }
-
-    fn time(&mut self, start: usize) -> TokenType {
-        macro_rules! next {
-            () => {
-                self.next_grapheme();
-                if self.is_at_end() {
-                    return TokenType::Error(ScanError::InvalidTime);
-                }
-            };
-        }
-
-        if start + 1 >= self.lexeme().as_bytes().len() {
-            return TokenType::Error(ScanError::InvalidDate);
-        }
-        let Ok(hour) = std::str::from_utf8(&self.lexeme().as_bytes()[start..=start + 1]) else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        if self.is_at_end() {
-            return TokenType::Error(ScanError::InvalidDate);
-        }
-        next!();
-        next!();
-        next!();
-        if start + 4 >= self.lexeme().as_bytes().len() {
-            return TokenType::Error(ScanError::InvalidDate);
-        }
-        let Ok(minute) = std::str::from_utf8(&self.lexeme().as_bytes()[start + 3..=start + 4]) else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        next!();
-        next!();
-        next!();
-        if start + 7 >= self.lexeme().as_bytes().len() {
-            return TokenType::Error(ScanError::InvalidDate);
-        }
-        let Ok(second) = std::str::from_utf8(&self.lexeme().as_bytes()[start + 6..=start + 7]) else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        let (nanosecond, nanos_len) = if self.peek_grapheme() == "." {
-            self.next_grapheme();
-            while is_digit(self.peek_grapheme()) {
-                self.next_grapheme();
-            }
-
-            if start + 8 >= self.lexeme().as_bytes().len() {
-                return TokenType::Error(ScanError::InvalidDate);
-            }
-            let Ok(lexeme) = std::str::from_utf8(&self.lexeme().as_bytes()[start + 8..]) else {
-                return TokenType::Error(ScanError::InvalidDate);
-            };
-            let Ok(frac_secs) = (String::from("0") + lexeme)
-                .parse::<f64>()
-                else {
-
-                return TokenType::Error(ScanError::InvalidDate);
-                };
-            ((frac_secs * 1_000_000_000.0) as u32, lexeme.len())
-        } else {
-            (0_u32, 0)
-        };
-
-        let offset = match self.peek_grapheme() {
-            "+" | "-" => {
-                let sign = if self.next_grapheme() == "+" { 1 } else { -1 };
-
-                if self.is_at_end() {
-                    return TokenType::Error(ScanError::InvalidDate);
-                }
-                next!();
-                next!();
-                next!();
-                if start + nanos_len + 10 >= self.lexeme().as_bytes().len() {
-                    return TokenType::Error(ScanError::InvalidDate);
-                }
-                let Ok(hour) = std::str::from_utf8(
-                    &self.lexeme().as_bytes()[start + nanos_len + 9..=start + nanos_len + 10],
-                ) else {
-                    return TokenType::Error(ScanError::InvalidDate);
-                };
-
-                next!();
-                next!(); // why not 3??
-                if start + nanos_len + 13 >= self.lexeme().as_bytes().len() {
-                    return TokenType::Error(ScanError::InvalidDate);
-                }
-                let Ok(minute) = std::str::from_utf8(
-                    &self.lexeme().as_bytes()[start + nanos_len + 12..=start + nanos_len + 13],
-                ) else {
-                    return TokenType::Error(ScanError::InvalidDate);
-                };
-
-                let Ok(hour_num) = hour.parse::<i16>() else {
-                    return TokenType::Error(ScanError::InvalidDate);
-                };
-                if hour_num > 24 {
-                    return TokenType::Error(ScanError::InvalidDate);
-                }
-
-                let Ok(minute_num) = minute .parse::<i16>() else {
-                    return TokenType::Error(ScanError::InvalidDate);
-                };
-                if minute_num > 60 {
-                    return TokenType::Error(ScanError::InvalidDate);
-                }
-
-                Some(Offset::Minutes(sign * (hour_num * 60 + minute_num)))
-            }
-            "Z" | "z" => {
-                self.next_grapheme();
-                Some(Offset::Z)
-            }
-            _ => None,
-        };
-
-        let Ok(hour) = hour.parse() else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-        let Ok(minute) = minute.parse() else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-        let Ok(second) = second.parse() else {
-            return TokenType::Error(ScanError::InvalidDate);
-        };
-
-        TokenType::Time {
-            time: Time {
-                hour,
-                minute,
-                second,
-                nanosecond,
-            },
-            offset,
         }
     }
 
@@ -1302,141 +1203,84 @@ impl<'doc> Scanner<'doc> {
     }
 }
 
-macro_rules! impl_alt_base {
-    ($name:ident, $base_i64:literal, $base_or_underscore:ident, $digit_to_dec:ident) => {
-        impl<'a> Scanner<'a> {
-            fn $name(&mut self, negative: bool) -> TokenType {
-                self.next_grapheme();
-
-                let mut digits = Vec::new();
-                while $base_or_underscore(self.peek_grapheme(), &mut false) {
-                    if self.peek_grapheme() != "_" {
-                        digits.push(self.peek_grapheme());
-                    }
-                    self.next_grapheme();
-                }
-
-                let err = || TokenType::Error(ScanError::InvalidNumber);
-                let map_err = |_| err();
-
-                let parse = || {
-                    let mut value: i64 = 0;
-                    for (i, digit) in digits.iter().rev().enumerate() {
-                        let digit_value = $digit_to_dec(*digit);
-                        value = i
-                            .try_into()
-                            .map(|i| $base_i64.checked_pow(i))
-                            .map_err(map_err)?
-                            .ok_or_else(err)?
-                            .checked_mul(digit_value)
-                            .ok_or_else(err)?
-                            .checked_add(value)
-                            .ok_or_else(err)?;
-                    }
-
-                    Ok(TokenType::Integer(if negative {
-                        value.checked_neg().ok_or_else(err)?
-                    } else {
-                        value
-                    }))
-                };
-
-                match parse() {
-                    Ok(value) => value,
-                    Err(err) => err,
-                }
-            }
+fn is_digit(s: &str, base: usize) -> bool {
+    match base {
+        2 => matches!(s, "0" | "1"),
+        8 => matches!(s, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"),
+        10 => matches!(s, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"),
+        16 => {
+            matches!(
+                s,
+                "0" | "1"
+                    | "2"
+                    | "3"
+                    | "4"
+                    | "5"
+                    | "6"
+                    | "7"
+                    | "8"
+                    | "9"
+                    | "a"
+                    | "A"
+                    | "b"
+                    | "B"
+                    | "c"
+                    | "C"
+                    | "d"
+                    | "D"
+                    | "e"
+                    | "E"
+                    | "f"
+                    | "F"
+            )
         }
-    };
-}
-
-impl_alt_base!(hex, 16_i64, hex_or_underscore, hex_to_i64);
-impl_alt_base!(octal, 8_i64, oct_or_underscore, hex_to_i64);
-impl_alt_base!(binary, 2_i64, bin_or_underscore, hex_to_i64);
-
-fn dec_or_underscore(s: &str, has_underscore: &mut bool) -> bool {
-    if s == "_" {
-        *has_underscore = true;
+        _ => false,
     }
-
-    is_digit(s) || s == "_"
 }
 
-fn hex_to_i64(digit: &str) -> i64 {
-    match digit {
-        "0" => 0,
-        "1" => 1,
-        "2" => 2,
-        "3" => 3,
-        "4" => 4,
-        "5" => 5,
-        "6" => 6,
-        "7" => 7,
-        "8" => 8,
-        "9" => 9,
-        "a" | "A" => 10,
-        "b" | "B" => 11,
-        "c" | "C" => 12,
-        "d" | "D" => 13,
-        "e" | "E" => 14,
-        "f" | "F" => 16,
+fn to_digit(s: &str, base: usize) -> i64 {
+    match base {
+        2 => match s {
+            "0" => 0,
+            "1" => 1,
+            _ => unreachable!(),
+        },
+        8 => match s {
+            "0" => 0,
+            "1" => 1,
+            "2" => 2,
+            "3" => 3,
+            "4" => 4,
+            "5" => 5,
+            "6" => 6,
+            "7" => 7,
+            _ => unreachable!(),
+        },
+        16 => match s {
+            "0" => 0,
+            "1" => 1,
+            "2" => 2,
+            "3" => 3,
+            "4" => 4,
+            "5" => 5,
+            "6" => 6,
+            "7" => 7,
+            "8" => 8,
+            "9" => 9,
+            "a" | "A" => 10,
+            "b" | "B" => 11,
+            "c" | "C" => 12,
+            "d" | "D" => 13,
+            "e" | "E" => 14,
+            "f" | "F" => 15,
+            _ => unreachable!(),
+        },
         _ => unreachable!(),
     }
 }
 
-fn hex_or_underscore(c: &str, has_underscore: &mut bool) -> bool {
-    if c == "_" {
-        *has_underscore = true;
-    }
-
-    matches!(
-        c,
-        "0" | "1"
-            | "2"
-            | "3"
-            | "4"
-            | "5"
-            | "6"
-            | "7"
-            | "8"
-            | "9"
-            | "a"
-            | "A"
-            | "b"
-            | "B"
-            | "c"
-            | "C"
-            | "d"
-            | "D"
-            | "e"
-            | "E"
-            | "f"
-            | "F"
-    ) || c == "_"
-}
-
-fn oct_or_underscore(s: &str, has_underscore: &mut bool) -> bool {
-    if s == "_" {
-        *has_underscore = true;
-    }
-
-    matches!(s, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7") || s == "_"
-}
-
-fn bin_or_underscore(s: &str, has_underscore: &mut bool) -> bool {
-    if s == "_" {
-        *has_underscore = true;
-    }
-
-    s == "0" || s == "1" || s == "_"
-}
-
 fn is_whitespace(s: &str) -> bool {
     s.as_bytes().iter().all(u8::is_ascii_whitespace)
-}
-
-fn is_digit(s: &str) -> bool {
-    matches!(s, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
 }
 
 fn is_non_identifier(s: &str) -> bool {
@@ -1460,9 +1304,11 @@ fn scanner_sanity() {
     let a = scanner.peek_grapheme();
     let aa = scanner.next_grapheme();
     let b = scanner.peek_grapheme();
+    let lexeme = scanner.lexeme();
     assert_eq!(a, aa);
     assert_eq!(a, "a");
     assert_eq!(b, "b");
+    assert_eq!(lexeme, "a");
 }
 
 /// non-recursive. returns whether passed or not
@@ -1521,8 +1367,14 @@ pub(crate) fn check_parse(name: String, contents: String) -> bool {
     let toml = match parse(&contents) {
         Ok(toml) => toml,
         Err(err) => {
-            let toks = scan(&contents).unwrap();
-            println!("{:#?}\n{:?}", toks, err);
+            match scan(&contents) {
+                Ok(toks) => {
+                    println!("{:?}\n{:?}", toks, err);
+                }
+                Err(e) => {
+                    println!("tokens of {} broke: {:?}", name, e)
+                }
+            }
             return false;
         }
     };
