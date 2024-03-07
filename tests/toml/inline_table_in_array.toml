@@ -1,9 +1,0 @@
-#--{
-#--    "a": [
-#--        {
-#--            "a": "a",
-#--        },
-#--    ],
-#--}
-# unclear whether this is valid toml but whatev
-a=[{a='a',},]
