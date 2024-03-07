@@ -1,5 +1,5 @@
 use argh::FromArgs;
-use black_dwarf::error::Error as BdError;
+use cretaceous::{error::Error as CrError, UnusedKeys};
 use std::path::PathBuf;
 
 #[derive(argh::FromArgs)]
@@ -29,25 +29,26 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), BdError> {
+fn run() -> Result<(), CrError> {
     let arg_strings = std::env::args().collect::<Vec<_>>();
     let arg_strs = arg_strings.iter().map(String::as_str).collect::<Vec<_>>();
     let args = match Args::from_args(&arg_strs[0..1], &arg_strs[1..]) {
         Ok(args) => args,
         Err(exit) => {
-            for line in exit.output.lines() {
-                tracing::info!("{}", line);
-            }
-
-            if let Some(project_file) = black_dwarf::util::find_project_file_from_current_dir() {
-                tracing::info!("The current project is {}", project_file.display());
-            } else {
-                tracing::info!("No project in current directory (or any parent directory)");
-            }
-
             if exit.status.is_err() {
-                return Err(BdError::CliError);
+                return Err(CrError::CliError(exit.output.trim().into()));
             } else {
+                tracing::info!(
+                    "\n{}\n{}",
+                    exit.output,
+                    if let Some(project_file) =
+                        cretaceous::util::find_project_file_from_current_dir()
+                    {
+                        format!("There is a project at {}", project_file.display())
+                    } else {
+                        "No project in current directory (or any parent directory)".into()
+                    },
+                );
                 return Ok(());
             }
         }
@@ -55,15 +56,15 @@ fn run() -> Result<(), BdError> {
 
     let Some(project_file) = args
         .project
-        .or_else(black_dwarf::util::find_project_file_from_current_dir)
+        .or_else(cretaceous::util::find_project_file_from_current_dir)
     else {
-        return Err(BdError::NoProject);
+        return Err(CrError::NoProject);
     };
     tracing::info!("Building project from {}", project_file.display());
 
     let file = std::fs::read_to_string(project_file.as_path())?;
-    let bd: black_dwarf::Project = toml::from_str(&file).map_err(|err| {
-        black_dwarf::error::ReadProject::from(err).with_filename(project_file.as_path())
+    let bd: cretaceous::Project = toml::from_str(&file).map_err(|err| {
+        cretaceous::error::ReadProject::from(err).with_filename(project_file.as_path())
     })?;
     tracing::debug!("Project: {:?}", bd);
 

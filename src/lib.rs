@@ -3,54 +3,29 @@ use std::{collections::HashMap, path::PathBuf};
 pub mod error;
 pub mod util;
 
-pub const PROJECT_FILENAME: &str = "BD.toml";
+pub const PROJECT_FILENAME: &str = "C.toml";
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(macros::UnusedKeys, serde::Deserialize, Debug)]
 pub struct Project {
     pub project: ProjectMeta,
     pub sources: Vec<SourceGroup>,
 
     #[serde(flatten)]
+    #[unused]
     pub rest: HashMap<String, toml::Value>,
 }
 
-impl Project {
-    pub fn unused_keys(&self) -> Vec<String> {
-        self.rest
-            .keys()
-            .map(|key| key.clone())
-            .chain(
-                self.project
-                    .unused_keys()
-                    .into_iter()
-                    .map(|key| format!("project.{}", key)),
-            )
-            .chain(
-                self.sources
-                    .iter()
-                    .flat_map(|source| source.unused_keys())
-                    .map(|key| format!("[[sources]].{}", key)),
-            )
-            .collect()
-    }
-}
-
-#[derive(serde::Deserialize, Debug)]
+#[derive(macros::UnusedKeys, serde::Deserialize, Debug)]
 pub struct ProjectMeta {
     pub name: String,
     pub version: String,
 
     #[serde(flatten)]
+    #[unused]
     pub rest: HashMap<String, toml::Value>,
 }
 
-impl ProjectMeta {
-    pub fn unused_keys(&self) -> Vec<String> {
-        self.rest.keys().map(|key| key.clone()).collect()
-    }
-}
-
-#[derive(serde::Deserialize, Debug)]
+#[derive(macros::UnusedKeys, serde::Deserialize, Debug)]
 pub struct SourceGroup {
     pub files: Vec<PathBuf>,
 
@@ -61,11 +36,28 @@ pub struct SourceGroup {
     pub link: Vec<String>,
 
     #[serde(flatten)]
+    #[unused]
     pub rest: HashMap<String, toml::Value>,
 }
 
-impl SourceGroup {
-    pub fn unused_keys(&self) -> Vec<String> {
-        self.rest.keys().map(|key| key.clone()).collect()
+pub trait UnusedKeys {
+    fn unused_keys(&self) -> Vec<String>;
+}
+
+impl<T> UnusedKeys for Vec<T> where T: UnusedKeys {
+    fn unused_keys(&self) -> Vec<String> {
+        self.iter().flat_map(|t| t.unused_keys().into_iter()).collect()
+    }
+}
+
+impl UnusedKeys for PathBuf {
+    fn unused_keys(&self) -> Vec<String> {
+        vec![]
+    }
+}
+
+impl UnusedKeys for String {
+    fn unused_keys(&self) -> Vec<String> {
+        vec![]
     }
 }

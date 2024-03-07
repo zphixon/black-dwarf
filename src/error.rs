@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("CLI misuse")]
-    CliError,
+    #[error("Invalid command: {0}")]
+    CliError(String),
 
     #[error("I/O")]
     Io(#[from] std::io::Error),
