@@ -1,0 +1,15 @@
+# vim: et ts=4 sw=4
+[project]
+name = "libtomato"
+version = "1"
+
+[[sources]]
+name = "tomatoes"
+files = [
+    "beefmaster.c",
+    "san_marzano.c",
+]
+
+[[targets]]
+name = "tomato"
+sources = ["tomatoes"]

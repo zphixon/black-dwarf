@@ -1,0 +1,4 @@
+[[compiler]]
+name = "gcc"
+include_path_format = "-I{}"
+link_path_format = "-L{}"

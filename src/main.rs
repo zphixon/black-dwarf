@@ -1,5 +1,5 @@
 use argh::FromArgs;
-use cretaceous::{error::Error as CrError, UnusedKeys};
+use cretaceous::{error::Error as CrError, project::Project, UnusedKeys};
 use std::path::PathBuf;
 
 #[derive(argh::FromArgs)]
@@ -36,14 +36,12 @@ fn run() -> Result<(), CrError> {
         Ok(args) => args,
         Err(exit) => {
             if exit.status.is_err() {
-                return Err(CrError::CliError(exit.output.trim().into()));
+                return Err(CrError::Cli(exit.output.trim().into()));
             } else {
                 tracing::info!(
                     "\n{}\n{}",
                     exit.output,
-                    if let Some(project_file) =
-                        cretaceous::util::find_project_file_from_current_dir()
-                    {
+                    if let Ok(project_file) = cretaceous::find_project_file_from_current_dir() {
                         format!("There is a project at {}", project_file.display())
                     } else {
                         "No project in current directory (or any parent directory)".into()
@@ -54,24 +52,30 @@ fn run() -> Result<(), CrError> {
         }
     };
 
-    let Some(project_file) = args
-        .project
-        .or_else(cretaceous::util::find_project_file_from_current_dir)
-    else {
-        return Err(CrError::NoProject);
+    let project_file = match args.project {
+        Some(project_file) => project_file,
+        None => cretaceous::find_project_file_from_current_dir()?,
     };
+
     tracing::info!("Building project from {}", project_file.display());
 
     let file = std::fs::read_to_string(project_file.as_path())?;
-    let bd: cretaceous::Project = toml::from_str(&file).map_err(|err| {
-        cretaceous::error::ReadProject::from(err).with_filename(project_file.as_path())
+    let bd: Project = toml::from_str(&file).map_err(|toml| CrError::ReadProject {
+        toml,
+        path: format!("{}", project_file.display()),
     })?;
-    tracing::debug!("Project: {:?}", bd);
+    tracing::debug!("Project: {:#?}", bd);
 
     let unused = bd.unused_keys();
     if !unused.is_empty() {
         tracing::warn!("Unused keys: {:?}", unused);
     }
+
+    let compiler = cretaceous::default_compiler()?;
+    tracing::debug!("Compiler: {:#?}", compiler);
+
+    let name = &compiler.name;
+    macros::env_var!("COMPILer", "PATH"; "COMPILER", name, "PATH");
 
     Ok(())
 }
