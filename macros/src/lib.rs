@@ -79,46 +79,75 @@ pub fn derive_unused_keys(item: TokenStream) -> TokenStream {
     .into()
 }
 
+#[derive(Clone)]
+struct EnvVar {
+    parts: Punctuated<Expr, Token![,]>,
+}
+
+impl Parse for EnvVar {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(EnvVar {
+            parts: Punctuated::parse_separated_nonempty(input)?,
+        })
+    }
+}
+
+struct EnvVarCall {
+    doc: Option<String>,
+    vars: Vec<EnvVar>,
+    default: Expr,
+}
+
+mod kw {
+    syn::custom_keyword!(doc);
+}
+
+impl Parse for EnvVarCall {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let lookahead = input.lookahead1();
+        let doc;
+        if lookahead.peek(kw::doc) {
+            let _become: kw::doc = input.parse()?;
+            let lit: LitStr = input.parse()?;
+            doc = Some(lit.value());
+        } else {
+            doc = None;
+        }
+
+        let mut vars = Punctuated::<EnvVar, Token![;]>::parse_separated_nonempty(input)?
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let Some(EnvVar { parts }) = vars.pop() else {
+            return Err(syn::Error::new(
+                input.span(),
+                "need at least a default value",
+            ));
+        };
+
+        let [default] = &parts.into_iter().collect::<Vec<_>>()[..] else {
+            return Err(syn::Error::new(
+                input.span(),
+                "expected a single expression for default value, got multiple",
+            ));
+        };
+        let default = default.clone();
+
+        Ok(EnvVarCall { doc, vars, default })
+    }
+}
+
 #[proc_macro]
 pub fn env_var(tokens: TokenStream) -> TokenStream {
-    struct FuckInner {
-        fuck: Punctuated<Expr, Token![,]>,
-    }
-
-    impl Parse for FuckInner {
-        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-            Ok(FuckInner {
-                fuck: Punctuated::parse_separated_nonempty(input)?,
-            })
-        }
-    }
-
-    struct FuckOuter {
-        fuck: Punctuated<FuckInner, Token![;]>,
-    }
-
-    impl Parse for FuckOuter {
-        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-            Ok(FuckOuter {
-                fuck: Punctuated::parse_separated_nonempty(input)?,
-            })
-        }
-    }
-
     let mut var_exprs = Vec::new();
     let mut var_names = Vec::new();
-    let outer = parse_macro_input!(tokens as FuckOuter);
-    let num = outer.fuck.len();
-    for (i, inner) in outer.fuck.into_iter().enumerate() {
-        if i + 1 == num {
-            let ts = inner.fuck;
-            var_exprs.push(quote::quote!(#ts));
-            break;
-        }
-
+    let outer = parse_macro_input!(tokens as EnvVarCall);
+    let num = outer.vars.len();
+    for (i, inner) in outer.vars.into_iter().enumerate() {
         let mut var_expr = quote::quote!("CR");
         let mut var_name = String::from("CR");
-        for expr in inner.fuck {
+        for expr in inner.parts {
             var_expr = quote::quote!(#var_expr , "_");
             var_name.push('_');
             match expr {
@@ -159,14 +188,18 @@ pub fn env_var(tokens: TokenStream) -> TokenStream {
 
     let env_var_dir = PathBuf::from("dist").join("env_vars");
     for var in var_names.iter() {
-        std::fs::write(env_var_dir.join(var), "").expect("create file");
+        std::fs::write(
+            env_var_dir.join(var),
+            outer
+                .doc
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("Undocumented"),
+        )
+        .expect("create file");
     }
 
-    let Some(or) = var_exprs.pop() else {
-        return quote::quote!(compile_error!("need at least one item"))
-            .into_token_stream()
-            .into();
-    };
+    let or = outer.default;
 
     quote::quote!(
         crate::get_env_or(&[#(&[#var_exprs]),*], #or)
