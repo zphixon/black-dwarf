@@ -8,7 +8,7 @@ pub enum Error {
     #[error("I/O error: {0}")]
     GenericIo(#[from] std::io::Error),
 
-    #[error("I/O error in {io}: {path}")]
+    #[error("I/O error: {path}: {io}")]
     FileIo { io: std::io::Error, path: String },
 
     #[error("Could not read project file {path}: {toml}")]
@@ -20,8 +20,17 @@ pub enum Error {
     #[error("No project file in this directory or any parent")]
     NoProject,
 
+    #[error("Project file is not in a directory")]
+    NoProjectDir,
+
     #[error("No config directory")]
     NoConfigDir,
+
+    #[error("Substitution was not valid: {0}")]
+    UnknownSubstitution(String),
+
+    #[error("File does not have a name: {0}")]
+    NoFilename(String),
 
     #[error("No compiler named {name}")]
     NoCompiler { name: String },
@@ -31,16 +40,19 @@ pub enum Error {
 
     #[error("Compiler is broken: {why}")]
     CompilerBroken { why: String },
+
+    #[error("Could not run compiler: {0}")]
+    CouldNotRunCompiler(#[from] subprocess::PopenError),
+
+    #[error("Compilation failed")]
+    CompilationFailed,
 }
 
 impl Error {
-    pub fn with_filename(self, filename: &Path) -> Error {
-        match self {
-            Error::GenericIo(io) => Error::FileIo {
-                io,
-                path: format!("{}", filename.display()),
-            },
-            _ => self,
+    pub fn file_io<P: AsRef<Path>>(io: std::io::Error, path: P) -> Error {
+        Error::FileIo {
+            io,
+            path: format!("{}", path.as_ref().display()),
         }
     }
 }

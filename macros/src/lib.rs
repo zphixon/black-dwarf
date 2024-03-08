@@ -108,7 +108,14 @@ pub fn env_var(tokens: TokenStream) -> TokenStream {
     let mut var_exprs = Vec::new();
     let mut var_names = Vec::new();
     let outer = parse_macro_input!(tokens as FuckOuter);
-    for inner in outer.fuck {
+    let num = outer.fuck.len();
+    for (i, inner) in outer.fuck.into_iter().enumerate() {
+        if i + 1 == num {
+            let ts = inner.fuck;
+            var_exprs.push(quote::quote!(#ts));
+            break;
+        }
+
         let mut var_expr = quote::quote!("CR");
         let mut var_name = String::from("CR");
         for expr in inner.fuck {
@@ -155,13 +162,14 @@ pub fn env_var(tokens: TokenStream) -> TokenStream {
         std::fs::write(env_var_dir.join(var), "").expect("create file");
     }
 
-    let strs = var_names.iter().map(|var| Lit::new(Literal::string(var)));
-
-    //panic!("{:#?}", var_exprs);
+    let Some(or) = var_exprs.pop() else {
+        return quote::quote!(compile_error!("need at least one item"))
+            .into_token_stream()
+            .into();
+    };
 
     quote::quote!(
-        #(#strs;)*
-        #(println!("{:?}", [#var_exprs]);)*
+        crate::get_env_or(&[#(&[#var_exprs]),*], #or)
     )
     .into_token_stream()
     .into()

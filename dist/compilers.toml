@@ -1,4 +1,18 @@
-[[compiler]]
-name = "gcc"
-include_path_format = "-I{}"
-link_path_format = "-L{}"
+[gcc]
+compile_format = [
+    "%command",
+    "%verbose_flag",
+    "%debug_flag",
+    "%compile_only_flag",
+    "%includes",
+    "%source",
+    "%output_option",
+    "%output",
+]
+command = "gcc"
+verbose_flag = "-v"
+debug_flag = "-g"
+compile_only_flag = "-c"
+include_path_option = "-I"
+output_option = "-o"
+output_format = "%source_basename.o"

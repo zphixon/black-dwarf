@@ -7,6 +7,12 @@ use std::path::PathBuf;
 struct Args {
     #[argh(option, description = "project file")]
     project: Option<PathBuf>,
+
+    #[argh(switch, description = "build with debug symbols")]
+    debug: bool,
+
+    #[argh(switch, description = "use verbose output")]
+    verbose: bool,
 }
 
 fn main() {
@@ -53,20 +59,23 @@ fn run() -> Result<(), CrError> {
     };
 
     let project_file = match args.project {
-        Some(project_file) => project_file,
+        Some(project_file) => project_file
+            .canonicalize()
+            .map_err(|io| CrError::file_io(io, project_file.as_path()))?,
         None => cretaceous::find_project_file_from_current_dir()?,
     };
+    let project_dir = project_file.parent().ok_or_else(|| CrError::NoProjectDir)?;
 
     tracing::info!("Building project from {}", project_file.display());
 
     let file = std::fs::read_to_string(project_file.as_path())?;
-    let bd: Project = toml::from_str(&file).map_err(|toml| CrError::ReadProject {
+    let project: Project = toml::from_str(&file).map_err(|toml| CrError::ReadProject {
         toml,
-        path: format!("{}", project_file.display()),
+        path: project_file.display().to_string(),
     })?;
-    tracing::debug!("Project: {:#?}", bd);
+    tracing::debug!("Project: {:#?}", project);
 
-    let unused = bd.unused_keys();
+    let unused = project.unused_keys();
     if !unused.is_empty() {
         tracing::warn!("Unused keys: {:?}", unused);
     }
@@ -74,8 +83,17 @@ fn run() -> Result<(), CrError> {
     let compiler = cretaceous::default_compiler()?;
     tracing::debug!("Compiler: {:#?}", compiler);
 
-    let name = &compiler.name;
-    macros::env_var!("COMPILer", "PATH"; "COMPILER", name, "PATH");
+    for source_group in project.sources.iter() {
+        for source in source_group.files.iter() {
+            compiler.compile(
+                project_dir,
+                source.as_path(),
+                &source_group.headers,
+                args.debug,
+                args.verbose,
+            )?;
+        }
+    }
 
     Ok(())
 }

@@ -10,26 +10,7 @@ pub const ENV_VAR_PREFIX: &str = "CR";
 pub const PROJECT_FILENAME: &str = "C.toml";
 pub const CONFIG_DIR_NAME: &str = "cretaceous";
 pub const COMPILERS_FILENAME: &str = "compilers.toml";
-
-macro_rules! env_var {
-    (
-        $part1:expr $(, $part2:expr)* $(,)?
-        ; $part3:expr $(, $part4:expr)* $(,)?
-        $(; $part5:expr $(, $part6:expr)* $(,)?)* $(;)?
-    ) => {
-        env_var!($part1 $(, $part2)*);
-        env_var!($part3 $(, $part4)*);
-        $(env_var!($part5 $(, $part6)*);)*
-    };
-
-    (
-        $part1:expr $(, $part2:expr)* $(,)?
-    ) => {
-        print!(stringify!($part1));
-        $(print!(stringify!($part2));)*
-        println!();
-    };
-}
+pub const REPLACE_DEFAULT: &str = "%default";
 
 pub trait UnusedKeys {
     fn unused_keys(&self) -> Vec<String>;
@@ -58,14 +39,43 @@ impl UnusedKeys for String {
     }
 }
 
-pub fn get_env_or<const N: usize, S: AsRef<str>>(parts: [S; N], or: &str) -> Option<String> {
-    assert!(!parts.is_empty());
-    let mut name = String::from(ENV_VAR_PREFIX);
-    for part in parts {
-        name.push('_');
-        name.push_str(&part.as_ref().to_uppercase());
+pub fn get_env_or<S: AsRef<str>>(vars_in_parts: &[&[S]], or: &str) -> String {
+    for var_parts in vars_in_parts {
+        let mut name = String::new();
+        for part in var_parts.iter() {
+            name.push_str(&part.as_ref().to_uppercase());
+        }
+
+        // SAFETY: We are transforming the string to ascii
+        unsafe {
+            for byte in name.as_bytes_mut() {
+                if !byte.is_ascii_alphanumeric() {
+                    *byte = b'_';
+                }
+                debug_assert!(*byte == b'_' || byte.is_ascii_alphanumeric());
+            }
+        }
+
+        tracing::trace!("Checking {}", name);
+        if let Some(value) = std::env::var(&name).ok() {
+            return if value.contains(REPLACE_DEFAULT) {
+                let new_value = value.replace("%default", or);
+                tracing::debug!(
+                    "Using {}={:?} (substituted from {:?})",
+                    name,
+                    new_value,
+                    value
+                );
+                new_value
+            } else {
+                tracing::debug!("Using {}={:?}", name, value);
+                value
+            };
+        }
     }
-    std::env::var(&name).ok().or(Some(or.into()))
+
+    tracing::debug!("Using default: {:?}", or);
+    or.into()
 }
 
 pub fn find_project_file_from_current_dir() -> Result<PathBuf, Error> {
@@ -89,7 +99,12 @@ pub fn find_project_file_from_current_dir() -> Result<PathBuf, Error> {
 
 #[cfg(feature = "dev")]
 pub fn config_dir() -> Option<PathBuf> {
-    Some(PathBuf::from(".").join("dist").canonicalize().unwrap())
+    Some(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("dist")
+            .canonicalize()
+            .unwrap(),
+    )
 }
 
 #[cfg(not(feature = "dev"))]
@@ -104,26 +119,20 @@ pub fn compilers_file() -> Option<PathBuf> {
 pub fn default_compiler() -> Result<compiler::Compiler, Error> {
     let compilers_path = compilers_file().ok_or_else(|| Error::NoConfigDir)?;
     let compilers_str = std::fs::read_to_string(compilers_path.as_path())
-        .map_err(Error::from)
-        .map_err(|err| err.with_filename(compilers_path.as_path()))?;
+        .map_err(|io| Error::file_io(io, compilers_path.as_path()))?;
 
-    #[derive(serde::Deserialize)]
-    struct CompilerList {
-        compiler: Vec<compiler::Compiler>,
-    }
-
-    let CompilerList {
-        compiler: compilers,
-    } = toml::from_str(&compilers_str).map_err(|toml| Error::GenericToml {
-        toml,
-        path: format!("{}", compilers_path.display()),
-    })?;
+    let compilers = toml::from_str::<HashMap<String, compiler::CompilerInner>>(&compilers_str)
+        .map_err(|toml| Error::GenericToml {
+            toml,
+            path: compilers_path.display().to_string(),
+        })?;
 
     #[cfg(target_os = "linux")]
     let default_compiler_name = "gcc";
 
     let mut filtered = compilers
         .into_iter()
+        .map(|(name, inner)| compiler::Compiler { name, inner })
         .filter(|compiler| compiler.name == default_compiler_name)
         .collect::<Vec<_>>();
 

@@ -10,6 +10,21 @@ files = [
     "san_marzano.c",
 ]
 
+[[sources]]
+name = "grow"
+files = [
+    "grow/seed.c",
+    "grow/water.c",
+    "grow/soil.c",
+]
+
 [[targets]]
-name = "tomato"
+name = "libgrow"
+type = "static"
+sources = ["grow"]
+
+[[targets]]
+name = "libtomato"
+type = "shared"
 sources = ["tomatoes"]
+link = "libgrow"
