@@ -1,19 +1,9 @@
-use std::{
-    cell::OnceCell,
-    collections::HashSet,
-    io::{Read, Write},
-    path::PathBuf,
-    sync::{Mutex, OnceLock},
-};
-
 use proc_macro::TokenStream;
-use proc_macro2::Literal;
 use quote::ToTokens;
+use std::path::PathBuf;
 use syn::{
-    parse::{Parse, ParseBuffer, Parser},
-    parse_macro_input,
-    punctuated::Punctuated,
-    Expr, ExprLit, Fields, ItemStruct, Lit, LitStr, Meta, Token,
+    parse::Parse, parse_macro_input, punctuated::Punctuated, Expr, ExprLit, Fields, ItemStruct,
+    Lit, LitStr, Meta, Token,
 };
 
 #[proc_macro_derive(UnusedKeys, attributes(unused))]
@@ -143,8 +133,7 @@ pub fn env_var(tokens: TokenStream) -> TokenStream {
     let mut var_exprs = Vec::new();
     let mut var_names = Vec::new();
     let outer = parse_macro_input!(tokens as EnvVarCall);
-    let num = outer.vars.len();
-    for (i, inner) in outer.vars.into_iter().enumerate() {
+    for inner in outer.vars.into_iter() {
         let mut var_expr = quote::quote!("CR");
         let mut var_name = String::from("CR");
         for expr in inner.parts {

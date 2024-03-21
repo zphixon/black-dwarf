@@ -150,4 +150,12 @@ impl Compiler {
             Ok(())
         }
     }
+
+    pub fn link_static(&self) -> Result<(), Error> {
+        todo!()
+    }
+
+    pub fn link_dynamic(&self) -> Result<(), Error> {
+        todo!()
+    }
 }

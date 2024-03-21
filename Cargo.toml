@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-indexmap = "2.2.5"
+indexmap = { version = "2.2.5", features = ["serde"] }
 unicode-segmentation = "1.11.0"
 serde = { version = "1.0.197", features = ["derive"] }
 toml = "0.8.10"

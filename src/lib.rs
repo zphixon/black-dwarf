@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use error::Error;
+use indexmap::IndexMap;
 
 pub mod compiler;
 pub mod error;
@@ -36,6 +37,22 @@ impl UnusedKeys for PathBuf {
 impl UnusedKeys for String {
     fn unused_keys(&self) -> Vec<String> {
         vec![]
+    }
+}
+
+impl<T> UnusedKeys for IndexMap<String, T>
+where
+    T: UnusedKeys,
+{
+    fn unused_keys(&self) -> Vec<String> {
+        self.iter()
+            .flat_map(|(key, t)| {
+                t.unused_keys()
+                    .iter()
+                    .map(|inner| format!("{key}.{inner}"))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 }
 

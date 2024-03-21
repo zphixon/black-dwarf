@@ -3,28 +3,20 @@
 name = "libtomato"
 version = "1"
 
-[[sources]]
-name = "tomatoes"
-files = [
-    "beefmaster.c",
-    "san_marzano.c",
-]
-
-[[sources]]
-name = "grow"
-files = [
-    "grow/seed.c",
-    "grow/water.c",
-    "grow/soil.c",
-]
-
-[[targets]]
-name = "libgrow"
+[target.grow]
 type = "static"
-sources = ["grow"]
+headers = "grow.h"
+sources = [
+    "seed.c",
+    "soil.c",
+    "water.c",
+]
 
-[[targets]]
-name = "libtomato"
-type = "shared"
-sources = ["tomatoes"]
-link = "libgrow"
+[target.tomato]
+type = ["dynamic", "static"]
+needs = "grow"
+headers = "tomatoes.h"
+sources = [
+    "san_marzano.c",
+    "beefmaster.c",
+]

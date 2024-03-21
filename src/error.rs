@@ -46,6 +46,9 @@ pub enum Error {
 
     #[error("Compilation failed")]
     CompilationFailed,
+
+    #[error("No such build target: {0}")]
+    NoSuchBuildTarget(String),
 }
 
 impl Error {

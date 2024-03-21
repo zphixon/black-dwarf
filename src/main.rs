@@ -1,5 +1,9 @@
 use argh::FromArgs;
-use cretaceous::{error::Error as CrError, project::Project, UnusedKeys};
+use cretaceous::{
+    error::Error as CrError,
+    project::{Project, TargetType},
+    UnusedKeys,
+};
 use std::path::PathBuf;
 
 #[derive(argh::FromArgs)]
@@ -13,6 +17,9 @@ struct Args {
 
     #[argh(switch, description = "use verbose output")]
     verbose: bool,
+
+    #[argh(positional, description = "build targets")]
+    targets: Vec<String>,
 }
 
 fn main() {
@@ -73,7 +80,7 @@ fn run() -> Result<(), CrError> {
         toml,
         path: project_file.display().to_string(),
     })?;
-    tracing::debug!("Project: {:#?}", project);
+    tracing::debug!("Project meta: {:#?}", project.project);
 
     let unused = project.unused_keys();
     if !unused.is_empty() {
@@ -83,15 +90,43 @@ fn run() -> Result<(), CrError> {
     let compiler = cretaceous::default_compiler()?;
     tracing::debug!("Compiler: {:#?}", compiler);
 
-    for source_group in project.sources.iter() {
-        for source in source_group.files.iter() {
+    let targets = if args.targets.is_empty() {
+        project.targets_in_order()?
+    } else {
+        project.targets_in_order_from(args.targets.iter().map(|name| name.as_str()))?
+    };
+    tracing::debug!("Targets: {:#?}", targets);
+
+    for (target_name, target) in targets {
+        for source in target.sources.iter() {
+            let mut include_paths = vec![format!("{}", project_dir.join(target_name).display())];
+            include_paths.extend(
+                target
+                    .needs
+                    .iter()
+                    .map(|need| project_dir.join(need))
+                    .map(|dir| format!("{}", dir.display())),
+            );
+
             compiler.compile(
                 project_dir,
-                source.as_path(),
-                &source_group.headers,
+                &PathBuf::from(target_name).join(source),
+                &include_paths,
                 args.debug,
                 args.verbose,
             )?;
+        }
+
+        for target_type in target.type_.iter() {
+            match target_type {
+                TargetType::Static => {
+                    // heehoo
+                }
+
+                TargetType::Dynamic => {
+                    // haha
+                }
+            }
         }
     }
 
