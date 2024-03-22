@@ -1,4 +1,4 @@
-[gcc]
+[gnu]
 compile_format = [
     "%command",
     "%verbose_flag",
@@ -9,10 +9,10 @@ compile_format = [
     "%output_option",
     "%output",
 ]
-command = "gcc"
-verbose_flag = "-v"
-debug_flag = "-g"
+compile_command = "gcc"
+compile_verbose_flag = "-v"
+compile_debug_flag = "-g"
 compile_only_flag = "-c"
-include_path_option = "-I"
-output_option = "-o"
-output_format = "%source_basename.o"
+compile_include_path_option = "-I"
+compile_output_option = "-o"
+compile_output_format = "%source_basename.o"

@@ -157,7 +157,7 @@ pub fn default_compiler() -> Result<compiler::Compiler, Error> {
         })?;
 
     #[cfg(target_os = "linux")]
-    let default_compiler_name = "gcc";
+    let default_compiler_name = "gnu";
 
     let mut filtered = compilers
         .into_iter()

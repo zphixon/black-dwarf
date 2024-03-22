@@ -19,13 +19,13 @@ impl Deref for Compiler {
 #[serde(deny_unknown_fields)]
 pub struct CompilerInner {
     pub compile_format: Vec<String>,
-    pub command: String,
-    pub verbose_flag: String,
-    pub debug_flag: String,
+    pub compile_command: String,
+    pub compile_verbose_flag: String,
+    pub compile_debug_flag: String,
     pub compile_only_flag: String,
-    pub include_path_option: String,
-    pub output_option: String,
-    pub output_format: String,
+    pub compile_include_path_option: String,
+    pub compile_output_option: String,
+    pub compile_output_format: String,
 }
 
 const INCLUDE_PATH_SEPARATOR: &str = ",";
@@ -120,14 +120,16 @@ impl Compiler {
 
     fn resolve_compile_command(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Command used to compile a source file"
             "compiler", source_file, "command";
             "compiler_command";
-            self.command.as_str()
+            self.compile_command.as_str()
         )
     }
 
     fn resolve_compile_command_format(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Format string used to build the command which will compile a source file"
             "compiler", source_file, "command_format";
             "compiler_command_format";
             &self.compile_format.join(" ")
@@ -136,30 +138,34 @@ impl Compiler {
 
     fn resolve_compiler_verbose_flag(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Flag which will cause the compiler to output verbose information"
             "compiler", source_file, "verbose_flag";
             "compiler_verbose_flag";
-            self.verbose_flag.as_str()
+            self.compile_verbose_flag.as_str()
         )
     }
 
     fn resolve_compiler_debug_flag(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Flag which will cause the compiler to include debug symbols"
             "compiler", source_file, "debug_flag";
             "compiler_debug_flag";
-            self.debug_flag.as_str()
+            self.compile_debug_flag.as_str()
         )
     }
 
     fn resolve_compiler_include_path_option(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Option used to specify a path to search for header files"
             "compiler", source_file, "include_path_option";
             "compiler_include_path_option";
-            self.include_path_option.as_str()
+            self.compile_include_path_option.as_str()
         )
     }
 
     fn resolve_compiler_compile_only_flag(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Flag used to compile a source file without linking it"
             "compiler", source_file, "compile_only_flag";
             "compiler_compile_only_flag";
             self.compile_only_flag.as_str()
@@ -168,17 +174,19 @@ impl Compiler {
 
     fn resolve_compiler_output_option(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Option used to specify the output location of a compiled source file"
             "compiler", source_file, "output_option";
             "compiler_output_option";
-            self.output_option.as_str()
+            self.compile_output_option.as_str()
         )
     }
 
     fn resolve_compiler_output_format(&self, source_file: &String) -> String {
         macros::env_var!(
+            doc "Format that a compiled source file should take"
             "compiler", source_file, "output_format";
             "compiler_output_format";
-            self.output_format.as_str()
+            self.compile_output_format.as_str()
         )
     }
 
@@ -188,6 +196,7 @@ impl Compiler {
         include_paths: &[S],
     ) -> String {
         macros::env_var!(
+            doc "Comma-separated list of paths to search for header files"
             "compiler", source_file, "include_paths";
             "compiler_include_paths";
             &include_paths
