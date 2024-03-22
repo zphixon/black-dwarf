@@ -117,7 +117,13 @@ fn run() -> Result<(), CrError> {
                 );
             }
 
-            compiler.compile(source, &include_paths, args.debug, args.verbose)?;
+            compiler.compile(
+                project_dir,
+                source,
+                &include_paths,
+                args.debug,
+                args.verbose,
+            )?;
         }
 
         for target_type in target.type_.iter() {

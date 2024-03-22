@@ -28,83 +28,48 @@ pub struct CompilerInner {
     pub output_format: String,
 }
 
+const INCLUDE_PATH_SEPARATOR: &str = ",";
+
 impl Compiler {
     pub fn compile<S: AsRef<Path>>(
         &self,
-        source: &Path,
+        project_dir: &Path,
+        source_path: &Path,
         include_paths: &[S],
         debug: bool,
         verbose: bool,
     ) -> Result<(), Error> {
-        if !source.is_absolute() {
+        if !source_path.is_absolute() {
             return Err(Error::Bug(format!(
                 "Compiling non-absolute source file {}",
-                source.display().to_string()
+                source_path.display().to_string()
             )));
         }
 
-        tracing::info!("Compiling {}", source.display());
-        let source_file = source.display().to_string();
+        let short_source_path = source_path
+        .strip_prefix(project_dir)
+        .map_err(|_| {
+                Error::Bug(format!(
+                    "Source file {} not in project dir {}",
+                    source_path.display(),
+                    project_dir.display(),
+                ))
+            })?
+            .display()
+            .to_string();
+        tracing::info!("Compiling {}", short_source_path);
 
-        let command_format = macros::env_var!(
-            "compiler", source_file, "command_format";
-            "compiler_command_format";
-            &self.compile_format.join(" ")
-        );
-
-        let compiler_command = macros::env_var!(
-            "compiler", source_file, "command";
-            "compiler_command";
-            self.command.as_str()
-        );
-
-        let compiler_verbose_flag = macros::env_var!(
-            "compiler", source_file, "verbose_flag";
-            "compiler_verbose_flag";
-            self.verbose_flag.as_str()
-        );
-
-        let compiler_debug_flag = macros::env_var!(
-            "compiler", source_file, "debug_flag";
-            "compiler_debug_flag";
-            self.debug_flag.as_str()
-        );
-
-        let compiler_include_path_option = macros::env_var!(
-            "compiler", source_file, "include_path_option";
-            "compiler_include_path_option";
-            self.include_path_option.as_str()
-        );
-
-        let compiler_compile_only_flag = macros::env_var!(
-            "compiler", source_file, "compile_only_flag";
-            "compiler_compile_only_flag";
-            self.compile_only_flag.as_str()
-        );
-
-        let compiler_output_option = macros::env_var!(
-            "compiler", source_file, "output_option";
-            "compiler_output_option";
-            self.output_option.as_str()
-        );
-
-        let compiler_output_format = macros::env_var!(
-            "compiler", source_file, "output_format";
-            "compiler_output_format";
-            self.output_format.as_str()
-        );
-
-        let include_path_separator = macros::env_var!(
-            "compiler", source_file, "include_path_separator";
-            "compiler_include_path_separator";
-            ","
-        );
-
-        let compiler_include_paths = macros::env_var!(
-            "compiler", source_file, "include_paths";
-            "compiler_include_paths";
-            &include_paths.iter().map(|s| s.as_ref().display().to_string()).collect::<Vec<_>>().join(&include_path_separator)
-        );
+        let command_format = self.resolve_compile_command_format(&short_source_path);
+        let compiler_command = self.resolve_compile_command(&short_source_path);
+        let compiler_verbose_flag = self.resolve_compiler_verbose_flag(&short_source_path);
+        let compiler_debug_flag = self.resolve_compiler_debug_flag(&short_source_path);
+        let compiler_include_path_option =
+            self.resolve_compiler_include_path_option(&short_source_path);
+        let compiler_compile_only_flag =
+            self.resolve_compiler_compile_only_flag(&short_source_path);
+        let compiler_output_option = self.resolve_compiler_output_option(&short_source_path);
+        let compiler_output_format = self.resolve_compiler_output_format(&short_source_path);
+        let compiler_include_paths = self.resolve_include_paths(&short_source_path, include_paths);
 
         let mut command = Vec::<String>::new();
         for part in command_format.split(" ") {
@@ -116,22 +81,22 @@ impl Compiler {
                 "%debug_flag" if !debug => {}
                 "%compile_only_flag" => command.push(compiler_compile_only_flag.clone()),
                 "%includes" => {
-                    for path in compiler_include_paths.split(&include_path_separator) {
+                    for path in compiler_include_paths.split(INCLUDE_PATH_SEPARATOR) {
                         if path != "" {
                             command.push(compiler_include_path_option.clone());
                             command.push(path.into());
                         }
                     }
                 }
-                "%source" => command.push(source.display().to_string()),
+                "%source" => command.push(source_path.display().to_string()),
                 "%output_option" => command.push(compiler_output_option.clone()),
                 "%output" => command.push(
                     compiler_output_format.replace(
                         "%source_basename",
-                        &source
-                            .with_file_name(source.file_stem().ok_or_else(|| {
+                        &source_path
+                            .with_file_name(source_path.file_stem().ok_or_else(|| {
                                 tracing::error!("Cannot not compile file without filename");
-                                Error::NoFilename(source.display().to_string())
+                                Error::NoFilename(source_path.display().to_string())
                             })?)
                             .display()
                             .to_string(),
@@ -151,6 +116,86 @@ impl Compiler {
         } else {
             Ok(())
         }
+    }
+
+    fn resolve_compile_command(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "command";
+            "compiler_command";
+            self.command.as_str()
+        )
+    }
+
+    fn resolve_compile_command_format(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "command_format";
+            "compiler_command_format";
+            &self.compile_format.join(" ")
+        )
+    }
+
+    fn resolve_compiler_verbose_flag(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "verbose_flag";
+            "compiler_verbose_flag";
+            self.verbose_flag.as_str()
+        )
+    }
+
+    fn resolve_compiler_debug_flag(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "debug_flag";
+            "compiler_debug_flag";
+            self.debug_flag.as_str()
+        )
+    }
+
+    fn resolve_compiler_include_path_option(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "include_path_option";
+            "compiler_include_path_option";
+            self.include_path_option.as_str()
+        )
+    }
+
+    fn resolve_compiler_compile_only_flag(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "compile_only_flag";
+            "compiler_compile_only_flag";
+            self.compile_only_flag.as_str()
+        )
+    }
+
+    fn resolve_compiler_output_option(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "output_option";
+            "compiler_output_option";
+            self.output_option.as_str()
+        )
+    }
+
+    fn resolve_compiler_output_format(&self, source_file: &String) -> String {
+        macros::env_var!(
+            "compiler", source_file, "output_format";
+            "compiler_output_format";
+            self.output_format.as_str()
+        )
+    }
+
+    fn resolve_include_paths<S: AsRef<Path>>(
+        &self,
+        source_file: &String,
+        include_paths: &[S],
+    ) -> String {
+        macros::env_var!(
+            "compiler", source_file, "include_paths";
+            "compiler_include_paths";
+            &include_paths
+                .iter()
+                .map(|s| s.as_ref().display().to_string())
+                .collect::<Vec<_>>()
+                .join(INCLUDE_PATH_SEPARATOR)
+        )
     }
 
     pub fn link_static(&self) -> Result<(), Error> {
