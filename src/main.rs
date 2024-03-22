@@ -4,7 +4,7 @@ use cretaceous::{
     project::{TargetType, UnresolvedProject},
     UnusedKeys,
 };
-use std::path::PathBuf;
+use std::{io::IsTerminal, path::PathBuf};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -22,10 +22,18 @@ struct Args {
 
     #[argh(option, short = 't', description = "build targets")]
     targets: Vec<String>,
+
+    #[argh(switch, description = "don't actually do anything")]
+    dry_run: bool,
 }
 
 fn main() {
     let layer = tracing_subscriber::fmt::layer().without_time().compact();
+    let layer = if !std::io::stdout().is_terminal() {
+        layer.with_ansi(false)
+    } else {
+        layer
+    };
 
     let Ok(filter) = tracing_subscriber::EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
@@ -118,20 +126,32 @@ fn run() -> Result<(), CrError> {
 
     for (_, target) in targets {
         tracing::info!("Compiling target {}", target.name);
-        compiler.compile_target(&project, target, args.debug, args.verbose)?;
+        compiler.compile_target(&project, target, args.debug, args.verbose, args.dry_run)?;
 
         for target_type in target.type_.iter() {
             match target_type {
                 TargetType::Archive => {
-                    compiler.create_archive(&project, target, args.verbose)?;
+                    compiler.create_archive(&project, target, args.verbose, args.dry_run)?;
                 }
 
                 TargetType::Dynamic => {
-                    compiler.link_dynamic(&project, target, args.verbose, args.debug)?;
+                    compiler.link_dynamic(
+                        &project,
+                        target,
+                        args.verbose,
+                        args.debug,
+                        args.dry_run,
+                    )?;
                 }
 
                 TargetType::Binary => {
-                    compiler.link_binary(&project, target, args.verbose, args.debug)?;
+                    compiler.link_binary(
+                        &project,
+                        target,
+                        args.verbose,
+                        args.debug,
+                        args.dry_run,
+                    )?;
                 }
             }
         }

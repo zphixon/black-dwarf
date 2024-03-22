@@ -75,6 +75,7 @@ impl Compiler {
         include_paths: &[S],
         debug: bool,
         verbose: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         if !source_path.is_absolute() {
             return Err(Error::Bug(format!(
@@ -127,6 +128,10 @@ impl Compiler {
         }
 
         tracing::info!("{:?}", command);
+        if dry_run {
+            tracing::debug!("Skipping due to --dry-run");
+            return Ok(());
+        }
         let status = subprocess::Exec::cmd(&command[0])
             .args(&command[1..])
             .join()?;
@@ -360,6 +365,7 @@ impl Compiler {
         target: &Target,
         debug: bool,
         verbose: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         for source in target.sources.iter() {
             let mut include_paths = vec![target.path.as_path()];
@@ -374,7 +380,7 @@ impl Compiler {
                 );
             }
 
-            self.compile_single_file(project, source, &include_paths, debug, verbose)?;
+            self.compile_single_file(project, source, &include_paths, debug, verbose, dry_run)?;
         }
 
         Ok(())
@@ -425,6 +431,7 @@ impl Compiler {
         project: &Project,
         target: &Target,
         verbose: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         tracing::info!("Archiving target {}", target.name);
 
@@ -434,32 +441,47 @@ impl Compiler {
         let archive_verbose_flag = self.resolve_archive_verbose_flag(&target.name);
         let archive_flag = self.resolve_archive_flag(&target.name);
 
-        let mut command = Vec::<String>::new();
-        for part in archive_format.split(" ") {
-            match part {
-                "%command" => command.push(archive_command.clone()),
-                "%verbose_flag" if verbose => command.push(archive_verbose_flag.clone()),
-                "%verbose_flag" if !verbose => {}
-                "%objects" => {
-                    for source_path in target.sources.iter() {
-                        let short_source_path = self.short_source_path(project, source_path)?;
-                        command.push(
-                            self.compile_output_filename(&short_source_path, source_path)?
-                                .display()
-                                .to_string(),
-                        );
-                    }
-                }
-                "%archive_flag" => command.push(archive_flag.clone()),
-                "%output" => command.push(archive_output_format.replace("%target", &target.name)),
-                _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
-                _ => command.push(part.into()),
-            }
+        //"%verbose_flag" if verbose => command.push(archive_verbose_flag.clone()), //"%verbose_flag" if !verbose => {}
+        let mut replace_objects = String::new();
+        for source_path in target.sources.iter() {
+            let short_source_path = self.short_source_path(project, source_path)?;
+            replace_objects.push_str(
+                &self
+                    .compile_output_filename(&short_source_path, source_path)?
+                    .display()
+                    .to_string(),
+            );
+            replace_objects.push(' ');
         }
 
-        tracing::info!("{:?}", command);
-        let status = subprocess::Exec::cmd(&command[0])
-            .args(&command[1..])
+        let command = archive_format
+            .replace("%command", &archive_command)
+            .replace("%objects", &replace_objects)
+            .replace("%archive_flag", &archive_flag)
+            .replace(
+                "%output",
+                &target
+                    .path
+                    .join(&archive_output_format.replace("%target", &target.name))
+                    .display()
+                    .to_string(),
+            );
+
+        let command = if verbose {
+            command.replace("%verbose_flag", &archive_verbose_flag)
+        } else {
+            command.replace("%verbose_flag", "")
+        };
+
+        let command_vec = command.split_whitespace().collect::<Vec<_>>();
+
+        tracing::info!("{:?}", command_vec);
+        if dry_run {
+            tracing::debug!("Skipping due to --dry-run");
+            return Ok(());
+        }
+        let status = subprocess::Exec::cmd(&command_vec[0])
+            .args(&command_vec[..])
             .join()?;
         if !status.success() {
             Err(Error::ArchiveFailed)
@@ -474,6 +496,7 @@ impl Compiler {
         target: &Target,
         verbose: bool,
         debug: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         tracing::info!("Linking dynamic target {}", target.name);
 
@@ -534,7 +557,13 @@ impl Compiler {
                 }
                 "%output_option" => command.push(linker_output_option.clone()),
                 "%output" => {
-                    command.push(linker_dynamic_output_format.replace("%target", &target.name))
+                    command.push(
+                        target
+                            .path
+                            .join(linker_dynamic_output_format.replace("%target", &target.name))
+                            .display()
+                            .to_string(),
+                    );
                 }
                 _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
                 _ => command.push(part.into()),
@@ -542,6 +571,10 @@ impl Compiler {
         }
 
         tracing::info!("{:?}", command);
+        if dry_run {
+            tracing::debug!("Skipping due to --dry-run");
+            return Ok(());
+        }
         let status = subprocess::Exec::cmd(&command[0])
             .args(&command[1..])
             .join()?;
@@ -558,6 +591,7 @@ impl Compiler {
         target: &Target,
         verbose: bool,
         debug: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         tracing::info!("Linking binary target {}", target.name);
 
@@ -581,48 +615,64 @@ impl Compiler {
         let link_path_option = self.resolve_linker_link_path_option(&target.name);
         let command_format = self.resolve_binary_link_command_format(&target.name);
 
-        let mut command = Vec::<String>::new();
-        for part in command_format.split(" ") {
-            match part {
-                "%command" => command.push(linker_command.clone()),
-                "%verbose_flag" if verbose => command.push(linker_verbose_flag.clone()),
-                "%verbose_flag" if !verbose => {}
-                "%debug_flag" if debug => command.push(linker_debug_flag.clone()),
-                "%debug_flag" if !debug => {}
-                "%objects" => {
-                    for source_path in target.sources.iter() {
-                        let short_source_path = self.short_source_path(project, source_path)?;
-                        command.push(
-                            self.compile_output_filename(&short_source_path, source_path)?
-                                .display()
-                                .to_string(),
-                        );
-                    }
-                }
-                "%link_paths" => {
-                    for path in link_paths.split(PATH_SEPARATOR) {
-                        if path != "" {
-                            command.push(link_path_option.clone());
-                            command.push(path.into());
-                        }
-                    }
-                }
-                "%links" => {
-                    for need in target.needs.iter() {
-                        command.push(self.resolve_linker_link_option(need));
-                        command.push(need.clone());
-                    }
-                }
-                "%output_option" => command.push(linker_output_option.clone()),
-                "%output" => command.push(target.name.clone()), // TODO: .exe
-                _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
-                _ => command.push(part.into()),
+        let mut replace_objects = String::new();
+        for source_path in target.sources.iter() {
+            let short_source_path = self.short_source_path(project, source_path)?;
+            replace_objects.push_str(
+                &self
+                    .compile_output_filename(&short_source_path, source_path)?
+                    .display()
+                    .to_string(),
+            );
+            replace_objects.push(' ');
+        }
+
+        let mut replace_link_paths = String::new();
+        for path in link_paths.split(PATH_SEPARATOR) {
+            if path != "" {
+                replace_link_paths.push_str(&link_path_option);
+                replace_link_paths.push_str(&path);
+                replace_link_paths.push(' ');
             }
         }
 
-        tracing::info!("{:?}", command);
-        let status = subprocess::Exec::cmd(&command[0])
-            .args(&command[1..])
+        let mut replace_links = String::new();
+        for need in target.needs.iter() {
+            replace_links.push_str(&self.resolve_linker_link_option(need));
+            replace_links.push_str(&need);
+            replace_links.push(' ');
+        }
+
+        let command = command_format
+            .replace("%command", &linker_command)
+            .replace("%objects", &replace_objects)
+            .replace("%link_paths", &replace_link_paths)
+            .replace("%links", &replace_links)
+            .replace("%output_option", &linker_output_option)
+            .replace(
+                "%output",
+                &target.path.join(&target.name).display().to_string(),
+            );
+
+        let command = if verbose {
+            command.replace("%verbose_flag", &linker_verbose_flag)
+        } else {
+            command.replace("%verbose_flag", "")
+        };
+        let command = if debug {
+            command.replace("%debug_flag", &linker_debug_flag)
+        } else {
+            command.replace("%debug_flag", "")
+        };
+
+        let command_vec = command.split_whitespace().collect::<Vec<_>>();
+        tracing::info!("{:?}", command_vec);
+        if dry_run {
+            tracing::debug!("Skipping due to --dry-run");
+            return Ok(());
+        }
+        let status = subprocess::Exec::cmd(&command_vec[0])
+            .args(&command_vec[1..])
             .join()?;
         if !status.success() {
             Err(Error::LinkFailed)
