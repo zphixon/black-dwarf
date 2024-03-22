@@ -1,5 +1,11 @@
-use crate::error::Error;
-use std::{ops::Deref, path::Path};
+use crate::{
+    error::Error,
+    project::{Project, Target},
+};
+use std::{
+    ops::Deref,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug)]
 pub struct Compiler {
@@ -20,20 +26,44 @@ impl Deref for Compiler {
 pub struct CompilerInner {
     pub compile_format: Vec<String>,
     pub compile_command: String,
-    pub compile_verbose_flag: Option<String>,
-    pub compile_debug_flag: Option<String>,
-    pub compile_only_flag: Option<String>,
-    pub compile_include_path_option: Option<String>,
-    pub compile_output_option: Option<String>,
-    pub compile_output_format: Option<String>,
+    pub compile_verbose_flag: String,
+    pub compile_debug_flag: String,
+    pub compile_only_flag: String,
+    pub compile_include_path_option: String,
+    pub compile_output_option: String,
+    pub compile_output_format: String,
+
+    pub dynamic_link_format: Vec<String>,
+    pub dynamic_link_command: String,
+    pub dynamic_link_flag: String,
+    pub dynamic_link_verbose_flag: String,
+    pub dynamic_link_debug_flag: String,
+    pub dynamic_link_library_path_option: String,
+    pub dynamic_link_output_option: String,
+    pub dynamic_link_output_format: String,
+    pub dynamic_link_option: String,
 }
 
-const INCLUDE_PATH_SEPARATOR: &str = ",";
+const PATH_SEPARATOR: &str = ",";
 
 impl Compiler {
-    pub fn compile<S: AsRef<Path>>(
+    fn short_source_path(&self, project: &Project, source_path: &Path) -> Result<String, Error> {
+        Ok(source_path
+            .strip_prefix(&project.dir)
+            .map_err(|_| {
+                Error::Bug(format!(
+                    "Source file {} not in project dir {}",
+                    source_path.display(),
+                    project.dir.display(),
+                ))
+            })?
+            .display()
+            .to_string())
+    }
+
+    pub fn compile_single_file<S: AsRef<Path>>(
         &self,
-        project_dir: &Path,
+        project: &Project,
         source_path: &Path,
         include_paths: &[S],
         debug: bool,
@@ -46,17 +76,7 @@ impl Compiler {
             )));
         }
 
-        let short_source_path = source_path
-            .strip_prefix(project_dir)
-            .map_err(|_| {
-                Error::Bug(format!(
-                    "Source file {} not in project dir {}",
-                    source_path.display(),
-                    project_dir.display(),
-                ))
-            })?
-            .display()
-            .to_string();
+        let short_source_path = self.short_source_path(project, source_path)?;
         tracing::info!("Compiling {}", short_source_path);
 
         let command_format = self.resolve_compile_command_format(&short_source_path);
@@ -68,7 +88,6 @@ impl Compiler {
         let compiler_compile_only_flag =
             self.resolve_compiler_compile_only_flag(&short_source_path);
         let compiler_output_option = self.resolve_compiler_output_option(&short_source_path);
-        let compiler_output_format = self.resolve_compiler_output_format(&short_source_path);
         let compiler_include_paths = self.resolve_include_paths(&short_source_path, include_paths);
 
         let mut command = Vec::<String>::new();
@@ -81,7 +100,7 @@ impl Compiler {
                 "%debug_flag" if !debug => {}
                 "%compile_only_flag" => command.push(compiler_compile_only_flag.clone()),
                 "%includes" => {
-                    for path in compiler_include_paths.split(INCLUDE_PATH_SEPARATOR) {
+                    for path in compiler_include_paths.split(PATH_SEPARATOR) {
                         if path != "" {
                             command.push(compiler_include_path_option.clone());
                             command.push(path.into());
@@ -91,16 +110,9 @@ impl Compiler {
                 "%source" => command.push(source_path.display().to_string()),
                 "%output_option" => command.push(compiler_output_option.clone()),
                 "%output" => command.push(
-                    compiler_output_format.replace(
-                        "%source_basename",
-                        &source_path
-                            .with_file_name(source_path.file_stem().ok_or_else(|| {
-                                tracing::error!("Cannot not compile file without filename");
-                                Error::NoFilename(source_path.display().to_string())
-                            })?)
-                            .display()
-                            .to_string(),
-                    ),
+                    self.compile_output_filename(&short_source_path, source_path)?
+                        .display()
+                        .to_string(),
                 ),
                 _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
                 _ => command.push(part.into()),
@@ -116,6 +128,27 @@ impl Compiler {
         } else {
             Ok(())
         }
+    }
+
+    fn compile_output_filename(
+        &self,
+        short_source_path: &String,
+        source_path: &Path,
+    ) -> Result<PathBuf, Error> {
+        // hnngn wh
+        Ok(PathBuf::from(
+            self.resolve_compiler_output_format(short_source_path)
+                .replace(
+                    "%source_basename",
+                    &source_path
+                        .with_file_name(source_path.file_stem().ok_or_else(|| {
+                            tracing::error!("Cannot not compile file without filename");
+                            Error::NoFilename(source_path.display().to_string())
+                        })?)
+                        .display()
+                        .to_string(),
+                ),
+        ))
     }
 
     fn resolve_compile_command(&self, source_file: &String) -> String {
@@ -141,7 +174,7 @@ impl Compiler {
             doc "Flag which will cause the compiler to output verbose information"
             "compiler", source_file, "verbose_flag";
             "compiler_verbose_flag";
-            self.compile_verbose_flag.as_ref().map(|s| s.as_str()).unwrap_or("-v")
+            self.compile_verbose_flag.as_str()
         )
     }
 
@@ -150,7 +183,7 @@ impl Compiler {
             doc "Flag which will cause the compiler to include debug symbols"
             "compiler", source_file, "debug_flag";
             "compiler_debug_flag";
-            self.compile_debug_flag.as_ref().map(|s| s.as_str()).unwrap_or("-g")
+            self.compile_debug_flag.as_str()
         )
     }
 
@@ -159,7 +192,7 @@ impl Compiler {
             doc "Option used to specify a path to search for header files"
             "compiler", source_file, "include_path_option";
             "compiler_include_path_option";
-            self.compile_include_path_option.as_ref().map(|s| s.as_str()).unwrap_or("-I")
+            self.compile_include_path_option.as_str()
         )
     }
 
@@ -168,7 +201,7 @@ impl Compiler {
             doc "Flag used to compile a source file without linking it"
             "compiler", source_file, "compile_only_flag";
             "compiler_compile_only_flag";
-            self.compile_only_flag.as_ref().map(|s| s.as_str()).unwrap_or("-c")
+            self.compile_only_flag.as_str()
         )
     }
 
@@ -177,7 +210,7 @@ impl Compiler {
             doc "Option used to specify the output location of a compiled source file"
             "compiler", source_file, "output_option";
             "compiler_output_option";
-            self.compile_output_option.as_ref().map(|s| s.as_str()).unwrap_or("-o")
+            self.compile_output_option.as_str()
         )
     }
 
@@ -186,7 +219,7 @@ impl Compiler {
             doc "Format that a compiled source file should take"
             "compiler", source_file, "output_format";
             "compiler_output_format";
-            self.compile_output_format.as_ref().map(|s| s.as_str()).unwrap_or("%source_basename.o")
+            self.compile_output_format.as_str()
         )
     }
 
@@ -203,15 +236,215 @@ impl Compiler {
                 .iter()
                 .map(|s| s.as_ref().display().to_string())
                 .collect::<Vec<_>>()
-                .join(INCLUDE_PATH_SEPARATOR)
+                .join(PATH_SEPARATOR)
         )
+    }
+
+    fn resolve_link_command(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Command used to link a dynamic library"
+            "dynamic_linker", target_name, "command";
+            "dynamic_linker_command";
+            self.dynamic_link_command.as_str()
+        )
+    }
+
+    fn resolve_link_command_format(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Format string used to build the command which will link a dynamic library"
+            "dynamic_linker", target_name, "command_format";
+            "dynamic_linker_command_format";
+            &self.dynamic_link_format.join(" ")
+        )
+    }
+
+    fn resolve_linker_verbose_flag(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Flag which will cause the linker to output verbose information"
+            "dynamic_linker", target_name, "verbose_flag";
+            "dynamic_linker_verbose_flag";
+            self.dynamic_link_verbose_flag.as_str()
+        )
+    }
+
+    fn resolve_linker_debug_flag(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Flag which will cause the linker to include debug symbols"
+            "dynamic_linker", target_name, "debug_flag";
+            "dynamic_linker_debug_flag";
+            self.dynamic_link_debug_flag.as_str()
+        )
+    }
+
+    fn resolve_linker_link_path_option(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Option used to specify a path to search for library files"
+            "dynamic_linker", target_name, "library_path_option";
+            "dynamic_linker_library_path_option";
+            self.dynamic_link_library_path_option.as_str()
+        )
+    }
+
+    fn resolve_linker_output_option(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Option used to specify the output location of a linked target"
+            "dynamic_linker", target_name, "output_option";
+            "dynamic_linker_output_option";
+            self.dynamic_link_output_option.as_str()
+        )
+    }
+
+    fn resolve_linker_output_format(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Format that a linked target should take"
+            "dynamic_linker", target_name, "output_format";
+            "dynamic_linker_output_format";
+            self.dynamic_link_output_format.as_str()
+        )
+    }
+
+    fn resolve_linker_dynamic_link_flag(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Flag that will cause the linker to output a dynamic library"
+            "dynamic_linker", target_name, "link_flag";
+            "dynamic_linker_link_flag";
+            self.dynamic_link_flag.as_str()
+        )
+    }
+
+    fn resolve_linker_link_flag(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Option that will include a libary in a link command"
+            "dynamic_linker", target_name, "link_option";
+            "dynamic_linker_link_option";
+            self.dynamic_link_option.as_str()
+        )
+    }
+
+    fn resolve_linker_paths<S: AsRef<Path>>(
+        &self,
+        target_name: &String,
+        link_paths: &[S],
+    ) -> String {
+        macros::env_var!(
+            doc "Comma-separated list of paths to search for library files"
+            "dynamic_linker", target_name, "link_paths";
+            "dynamic_linker_link_paths";
+            &link_paths
+                .iter()
+                .map(|s| s.as_ref().display().to_string())
+                .collect::<Vec<_>>()
+                .join(PATH_SEPARATOR)
+        )
+    }
+
+    pub fn compile_target(
+        &self,
+        project: &Project,
+        target: &Target,
+        debug: bool,
+        verbose: bool,
+    ) -> Result<(), Error> {
+        for source in target.sources.iter() {
+            let mut include_paths = vec![target.path.as_path()];
+            for need in target.needs.iter() {
+                include_paths.push(
+                    project
+                        .target
+                        .get(need.as_str())
+                        .ok_or_else(|| Error::Bug(format!("Resolved project had unknown target")))?
+                        .path
+                        .as_path(),
+                );
+            }
+
+            self.compile_single_file(project, source, &include_paths, debug, verbose)?;
+        }
+
+        Ok(())
     }
 
     pub fn link_static(&self) -> Result<(), Error> {
         todo!()
     }
 
-    pub fn link_dynamic(&self) -> Result<(), Error> {
-        todo!()
+    pub fn link_dynamic(
+        &self,
+        project: &Project,
+        target: &Target,
+        verbose: bool,
+        debug: bool,
+    ) -> Result<(), Error> {
+        let mut link_paths = vec![target.path.as_path()];
+        for need in target.needs.iter() {
+            link_paths.push(
+                project
+                    .target
+                    .get(need.as_str())
+                    .ok_or_else(|| Error::Bug(format!("Resolved project had unknown target")))?
+                    .path
+                    .as_path(),
+            );
+        }
+        let link_paths = self.resolve_linker_paths(&target.name, &link_paths);
+
+        let linker_command = self.resolve_link_command(&target.name);
+        let linker_verbose_flag = self.resolve_linker_verbose_flag(&target.name);
+        let linker_debug_flag = self.resolve_linker_debug_flag(&target.name);
+        let linker_dynamic_link_flag = self.resolve_linker_dynamic_link_flag(&target.name);
+        let linker_output_option = self.resolve_linker_output_option(&target.name);
+        let linker_output_format = self.resolve_linker_output_format(&target.name);
+        let link_path_option = self.resolve_linker_link_path_option(&target.name);
+        let command_format = self.resolve_link_command_format(&target.name);
+
+        let mut command = Vec::<String>::new();
+        for part in command_format.split(" ") {
+            match part {
+                "%command" => command.push(linker_command.clone()),
+                "%verbose_flag" if verbose => command.push(linker_verbose_flag.clone()),
+                "%verbose_flag" if !verbose => {}
+                "%debug_flag" if debug => command.push(linker_debug_flag.clone()),
+                "%debug_flag" if !debug => {}
+                "%dynamic_link_flag" => command.push(linker_dynamic_link_flag.clone()),
+                "%objects" => {
+                    for source_path in target.sources.iter() {
+                        let short_source_path = self.short_source_path(project, source_path)?;
+                        command.push(
+                            self.compile_output_filename(&short_source_path, source_path)?
+                                .display()
+                                .to_string(),
+                        );
+                    }
+                }
+                "%link_paths" => {
+                    for path in link_paths.split(PATH_SEPARATOR) {
+                        if path != "" {
+                            command.push(link_path_option.clone());
+                            command.push(path.into());
+                        }
+                    }
+                }
+                "%links" => {
+                    for need in target.needs.iter() {
+                        command.push(self.resolve_linker_link_flag(need));
+                        command.push(need.clone());
+                    }
+                }
+                "%output_option" => command.push(linker_output_option.clone()),
+                "%output" => command.push(linker_output_format.replace("%target", &target.name)),
+                _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
+                _ => command.push(part.into()),
+            }
+        }
+
+        tracing::info!("{:?}", command);
+        let status = subprocess::Exec::cmd(&command[0])
+            .args(&command[1..])
+            .join()?;
+        if !status.success() {
+            Err(Error::LinkFailed)
+        } else {
+            Ok(())
+        }
     }
 }

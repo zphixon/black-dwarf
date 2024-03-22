@@ -98,7 +98,6 @@ fn run() -> Result<(), CrError> {
             toml,
             path: project_file.display().to_string(),
         })?;
-    tracing::debug!("Project meta: {:#?}", parsed_project.project);
 
     let unused = parsed_project.unused_keys();
     if !unused.is_empty() {
@@ -107,6 +106,7 @@ fn run() -> Result<(), CrError> {
 
     let project = parsed_project.resolve(project_dir)?;
     let compiler = cretaceous::default_compiler()?;
+    tracing::debug!("Project meta: {:#?}", project.project);
     tracing::debug!("Compiler: {:#?}", compiler);
 
     let targets = if args.targets.is_empty() {
@@ -118,30 +118,7 @@ fn run() -> Result<(), CrError> {
 
     for (_, target) in targets {
         tracing::info!("Compiling target {}", target.name);
-
-        for source in target.sources.iter() {
-            let mut include_paths = vec![target.path.as_path()];
-            for need in target.needs.iter() {
-                include_paths.push(
-                    project
-                        .target
-                        .get(need.as_str())
-                        .ok_or_else(|| {
-                            CrError::Bug(format!("Resolved project had unknown target"))
-                        })?
-                        .path
-                        .as_path(),
-                );
-            }
-
-            compiler.compile(
-                project_dir,
-                source,
-                &include_paths,
-                args.debug,
-                args.verbose,
-            )?;
-        }
+        compiler.compile_target(&project, target, args.debug, args.verbose)?;
 
         for target_type in target.type_.iter() {
             match target_type {
@@ -150,7 +127,7 @@ fn run() -> Result<(), CrError> {
                 }
 
                 TargetType::Dynamic => {
-                    // haha
+                    compiler.link_dynamic(&project, target, args.verbose, args.debug)?;
                 }
 
                 TargetType::Binary => {

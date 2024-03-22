@@ -10,3 +10,29 @@ compile_format = [
     "%output_option",
     "%output",
 ]
+compile_verbose_flag = "-v"
+compile_debug_flag = "-g"
+compile_only_flag = "-c"
+compile_include_path_option = "-I"
+compile_output_option = "-o"
+compile_output_format = "%source_basename.o"
+
+dynamic_link_command = "gcc"
+dynamic_link_format = [
+    "%command",
+    "%verbose_flag",
+    "%debug_flag",
+    "%dynamic_link_flag",
+    "%objects",
+    "%link_paths",
+    "%links",
+    "%output_option",
+    "%output",
+]
+dynamic_link_flag = "-shared"
+dynamic_link_output_format = "lib%target.so"
+dynamic_link_verbose_flag = "-v"
+dynamic_link_debug_flag = "-g"
+dynamic_link_output_option = "-o"
+dynamic_link_library_path_option = "-L"
+dynamic_link_option = "-l"

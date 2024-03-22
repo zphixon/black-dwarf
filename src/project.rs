@@ -20,6 +20,7 @@ pub struct UnresolvedProject {
 
 #[derive(Debug)]
 pub struct Project {
+    pub dir: PathBuf,
     pub project: ProjectMeta,
     pub target: IndexMap<String, Target>,
 }
@@ -30,7 +31,7 @@ impl UnresolvedProject {
 
         for (target_name, unresolved_target) in self.target {
             let resolved_target = unresolved_target
-                .resolve(target_name.clone(), project_dir)
+                .resolve(target_name.clone(), &project_dir)
                 .inspect_err(|_| tracing::error!("Could not resolve target {}", target_name))?;
 
             target.insert(target_name, resolved_target);
@@ -45,6 +46,7 @@ impl UnresolvedProject {
         }
 
         Ok(Project {
+            dir: project_dir.to_owned(),
             project: self.project,
             target,
         })

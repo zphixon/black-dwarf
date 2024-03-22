@@ -47,6 +47,9 @@ pub enum Error {
     #[error("Compilation failed")]
     CompilationFailed,
 
+    #[error("Linking failed")]
+    LinkFailed,
+
     #[error("No such build target: {0}")]
     NoSuchBuildTarget(String),
 
