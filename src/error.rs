@@ -50,6 +50,9 @@ pub enum Error {
     #[error("Linking failed")]
     LinkFailed,
 
+    #[error("Archiving failed")]
+    ArchiveFailed,
+
     #[error("No such build target: {0}")]
     NoSuchBuildTarget(String),
 

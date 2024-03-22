@@ -274,7 +274,6 @@ impl Compiler {
         )
     }
 
-
     fn resolve_linker_verbose_flag(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Flag which will cause the linker to output verbose information"
@@ -381,8 +380,92 @@ impl Compiler {
         Ok(())
     }
 
-    pub fn create_archive(&self) -> Result<(), Error> {
-        todo!()
+    fn resolve_archive_command(&self, target_name: &String) -> String {
+        macros::env_var!(
+            "archive", target_name, "command";
+            "archive_command";
+            self.archive_command.as_str()
+        )
+    }
+
+    fn resolve_archive_format(&self, target_name: &String) -> String {
+        macros::env_var!(
+            "archive", target_name, "format";
+            "archive_format";
+            &self.archive_format.join(" ")
+        )
+    }
+
+    fn resolve_archive_output_format(&self, target_name: &String) -> String {
+        macros::env_var!(
+            "archive", target_name, "output_format";
+            "archive_output_format";
+            self.archive_output_format.as_str()
+        )
+    }
+
+    fn resolve_archive_verbose_flag(&self, target_name: &String) -> String {
+        macros::env_var!(
+            "archive", target_name, "verbose_flag";
+            "archive_verbose_flag";
+            self.archive_verbose_flag.as_str()
+        )
+    }
+
+    fn resolve_archive_flag(&self, target_name: &String) -> String {
+        macros::env_var!(
+            "archive", target_name, "flag";
+            "archive_flag";
+            self.archive_flag.as_str()
+        )
+    }
+
+    pub fn create_archive(
+        &self,
+        project: &Project,
+        target: &Target,
+        verbose: bool,
+    ) -> Result<(), Error> {
+        tracing::info!("Archiving target {}", target.name);
+
+        let archive_command = self.resolve_archive_command(&target.name);
+        let archive_format = self.resolve_archive_format(&target.name);
+        let archive_output_format = self.resolve_archive_output_format(&target.name);
+        let archive_verbose_flag = self.resolve_archive_verbose_flag(&target.name);
+        let archive_flag = self.resolve_archive_flag(&target.name);
+
+        let mut command = Vec::<String>::new();
+        for part in archive_format.split(" ") {
+            match part {
+                "%command" => command.push(archive_command.clone()),
+                "%verbose_flag" if verbose => command.push(archive_verbose_flag.clone()),
+                "%verbose_flag" if !verbose => {}
+                "%objects" => {
+                    for source_path in target.sources.iter() {
+                        let short_source_path = self.short_source_path(project, source_path)?;
+                        command.push(
+                            self.compile_output_filename(&short_source_path, source_path)?
+                                .display()
+                                .to_string(),
+                        );
+                    }
+                }
+                "%archive_flag" => command.push(archive_flag.clone()),
+                "%output" => command.push(archive_output_format.replace("%target", &target.name)),
+                _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
+                _ => command.push(part.into()),
+            }
+        }
+
+        tracing::info!("{:?}", command);
+        let status = subprocess::Exec::cmd(&command[0])
+            .args(&command[1..])
+            .join()?;
+        if !status.success() {
+            Err(Error::ArchiveFailed)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn link_dynamic(
@@ -392,6 +475,8 @@ impl Compiler {
         verbose: bool,
         debug: bool,
     ) -> Result<(), Error> {
+        tracing::info!("Linking dynamic target {}", target.name);
+
         let mut link_paths = vec![target.path.as_path()];
         for need in target.needs.iter() {
             link_paths.push(
@@ -448,7 +533,9 @@ impl Compiler {
                     }
                 }
                 "%output_option" => command.push(linker_output_option.clone()),
-                "%output" => command.push(linker_dynamic_output_format.replace("%target", &target.name)),
+                "%output" => {
+                    command.push(linker_dynamic_output_format.replace("%target", &target.name))
+                }
                 _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
                 _ => command.push(part.into()),
             }
@@ -472,6 +559,8 @@ impl Compiler {
         verbose: bool,
         debug: bool,
     ) -> Result<(), Error> {
+        tracing::info!("Linking binary target {}", target.name);
+
         let mut link_paths = vec![target.path.as_path()];
         for need in target.needs.iter() {
             link_paths.push(

@@ -29,10 +29,10 @@ fn main() {
 
     let Ok(filter) = tracing_subscriber::EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
-        .with_env_var("CR_LOG_LEVEL")
+        .with_env_var("CR_LOG")
         .from_env()
     else {
-        println!("Invalid value for CR_LOG_LEVEL");
+        println!("Invalid value for CR_LOG");
         return;
     };
 
@@ -123,7 +123,7 @@ fn run() -> Result<(), CrError> {
         for target_type in target.type_.iter() {
             match target_type {
                 TargetType::Archive => {
-                    // heehoo
+                    compiler.create_archive(&project, target, args.verbose)?;
                 }
 
                 TargetType::Dynamic => {
