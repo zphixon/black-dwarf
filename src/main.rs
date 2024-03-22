@@ -5,25 +5,42 @@ use cretaceous::{
     UnusedKeys,
 };
 use std::path::PathBuf;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(argh::FromArgs)]
 #[argh(description = "build tool xd")]
 struct Args {
-    #[argh(option, description = "project file")]
+    #[argh(positional, description = "project file")]
     project: Option<PathBuf>,
 
-    #[argh(switch, description = "build with debug symbols")]
+    #[argh(switch, short = 'd', description = "build with debug symbols")]
     debug: bool,
 
-    #[argh(switch, description = "use verbose output")]
+    #[argh(switch, short = 'v', description = "use verbose output")]
     verbose: bool,
 
-    #[argh(positional, description = "build targets")]
+    #[argh(option, short = 't', description = "build targets")]
     targets: Vec<String>,
 }
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    let layer = tracing_subscriber::fmt::layer().without_time().compact();
+
+    let Ok(filter) = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .with_env_var("CR_LOG_LEVEL")
+        .from_env()
+    else {
+        println!("Invalid value for CR_LOG_LEVEL");
+        return;
+    };
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(layer)
+        .init();
+
     match run() {
         Ok(()) => {}
         Err(err) => {
