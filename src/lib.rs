@@ -56,6 +56,18 @@ where
     }
 }
 
+impl<T> UnusedKeys for Option<T>
+where
+    T: UnusedKeys,
+{
+    fn unused_keys(&self) -> Vec<String> {
+        match self {
+            Some(some) => some.unused_keys(),
+            None => vec![],
+        }
+    }
+}
+
 pub fn get_env_or<S: AsRef<str>>(vars_in_parts: &[&[S]], or: &str) -> String {
     for var_parts in vars_in_parts {
         let mut name = String::new();

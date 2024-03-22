@@ -49,6 +49,9 @@ pub enum Error {
 
     #[error("No such build target: {0}")]
     NoSuchBuildTarget(String),
+
+    #[error("Bug. Please report this! {0}")]
+    Bug(String),
 }
 
 impl Error {

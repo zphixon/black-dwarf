@@ -15,8 +15,14 @@ sources = [
 [target.tomato]
 type = ["dynamic", "static"]
 needs = "grow"
-headers = "tomatoes.h"
+headers = "tomato.h"
 sources = [
     "san_marzano.c",
     "beefmaster.c",
 ]
+
+[target.pomodoro]
+type = "binary"
+path = "."
+needs = ["grow", "tomato"]
+sources = "pomodoro.c"

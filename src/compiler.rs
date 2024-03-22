@@ -29,21 +29,22 @@ pub struct CompilerInner {
 }
 
 impl Compiler {
-    pub fn compile<S: AsRef<str>>(
+    pub fn compile<S: AsRef<Path>>(
         &self,
-        project_dir: &Path,
-        relative_source: &Path,
+        source: &Path,
         include_paths: &[S],
         debug: bool,
         verbose: bool,
     ) -> Result<(), Error> {
-        tracing::info!("Compiling {}", relative_source.display());
+        if !source.is_absolute() {
+            return Err(Error::Bug(format!(
+                "Compiling non-absolute source file {}",
+                source.display().to_string()
+            )));
+        }
 
-        let source_path = project_dir
-            .join(relative_source)
-            .canonicalize()
-            .map_err(|io| Error::file_io(io, relative_source))?;
-        let source_file = relative_source.display().to_string();
+        tracing::info!("Compiling {}", source.display());
+        let source_file = source.display().to_string();
 
         let command_format = macros::env_var!(
             "compiler", source_file, "command_format";
@@ -102,7 +103,7 @@ impl Compiler {
         let compiler_include_paths = macros::env_var!(
             "compiler", source_file, "include_paths";
             "compiler_include_paths";
-            &include_paths.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join(&include_path_separator)
+            &include_paths.iter().map(|s| s.as_ref().display().to_string()).collect::<Vec<_>>().join(&include_path_separator)
         );
 
         let mut command = Vec::<String>::new();
@@ -122,14 +123,15 @@ impl Compiler {
                         }
                     }
                 }
-                "%source" => command.push(source_path.display().to_string()),
+                "%source" => command.push(source.display().to_string()),
                 "%output_option" => command.push(compiler_output_option.clone()),
                 "%output" => command.push(
                     compiler_output_format.replace(
                         "%source_basename",
-                        &source_path
-                            .with_file_name(source_path.file_stem().ok_or_else(|| {
-                                Error::NoFilename(source_path.display().to_string())
+                        &source
+                            .with_file_name(source.file_stem().ok_or_else(|| {
+                                tracing::error!("Cannot not compile file without filename");
+                                Error::NoFilename(source.display().to_string())
                             })?)
                             .display()
                             .to_string(),

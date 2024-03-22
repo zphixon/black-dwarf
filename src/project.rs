@@ -4,17 +4,51 @@ use serde::{de::Visitor, Deserializer};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
 #[derive(macros::UnusedKeys, serde::Deserialize, Debug)]
-pub struct Project {
+pub struct UnresolvedProject {
     pub project: ProjectMeta,
-    pub target: IndexMap<String, Target>,
+    pub target: IndexMap<String, UnresolvedTarget>,
 
     #[serde(flatten)]
     #[unused]
     pub rest: HashMap<String, toml::Value>,
+}
+
+#[derive(Debug)]
+pub struct Project {
+    pub project: ProjectMeta,
+    pub target: IndexMap<String, Target>,
+}
+
+impl UnresolvedProject {
+    pub fn resolve(self, project_dir: &Path) -> Result<Project, Error> {
+        let mut target = IndexMap::new();
+
+        for (target_name, unresolved_target) in self.target {
+            let resolved_target = unresolved_target
+                .resolve(target_name.clone(), project_dir)
+                .inspect_err(|_| tracing::error!("Could not resolve target {}", target_name))?;
+
+            target.insert(target_name, resolved_target);
+        }
+
+        for resolved_target in target.values() {
+            for need in resolved_target.needs.iter() {
+                if !target.contains_key(need) {
+                    return Err(Error::NoSuchBuildTarget(need.clone()));
+                }
+            }
+        }
+
+        Ok(Project {
+            project: self.project,
+            target,
+        })
+    }
 }
 
 #[derive(macros::UnusedKeys, serde::Deserialize, Debug)]
@@ -27,10 +61,11 @@ pub struct ProjectMeta {
     pub rest: HashMap<String, toml::Value>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum TargetType {
     Static,
     Dynamic,
+    Binary,
 }
 
 impl FromStr for TargetType {
@@ -40,6 +75,7 @@ impl FromStr for TargetType {
         match s {
             "static" => Ok(TargetType::Static),
             "dynamic" => Ok(TargetType::Dynamic),
+            "binary" => Ok(TargetType::Binary),
             _ => Err(format!("Unknown target type {:?}", s)),
         }
     }
@@ -109,9 +145,11 @@ bruh!(one_or_many_target_type, TargetType);
 bruh!(one_or_many_string, String);
 
 #[derive(macros::UnusedKeys, serde::Deserialize, Debug)]
-pub struct Target {
+pub struct UnresolvedTarget {
     #[serde(rename = "type", deserialize_with = "one_or_many_target_type")]
     pub type_: Vec<TargetType>,
+
+    pub path: Option<String>,
 
     #[serde(deserialize_with = "one_or_many_string")]
     pub sources: Vec<String>,
@@ -125,6 +163,61 @@ pub struct Target {
     #[serde(flatten)]
     #[unused]
     pub rest: HashMap<String, toml::Value>,
+}
+
+impl UnresolvedTarget {
+    pub fn resolve(self, name: String, project_dir: &Path) -> Result<Target, Error> {
+        let path = if let Some(path) = self.path {
+            project_dir.join(&path).canonicalize().inspect_err(|_| {
+                tracing::error!(
+                    "Could not find target path {}",
+                    project_dir.join(path).display()
+                )
+            })?
+        } else {
+            project_dir.join(&name).canonicalize().inspect_err(|_| {
+                tracing::error!(
+                    "Could not find target path {}",
+                    project_dir.join(&name).display()
+                )
+            })?
+        };
+
+        Ok(Target {
+            type_: self.type_.into_iter().collect(),
+            name,
+            sources: self
+                .sources
+                .into_iter()
+                .map(|source| {
+                    path.join(&source).canonicalize().inspect_err(|_| {
+                        tracing::error!("Could not find source {}", path.join(source).display())
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+            headers: self
+                .headers
+                .into_iter()
+                .map(|header| {
+                    path.join(&header).canonicalize().inspect_err(|_| {
+                        tracing::error!("Could not find header {}", path.join(header).display())
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+            path,
+            needs: self.needs,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct Target {
+    pub type_: HashSet<TargetType>,
+    pub name: String,
+    pub path: PathBuf,
+    pub sources: Vec<PathBuf>,
+    pub headers: Vec<PathBuf>,
+    pub needs: Vec<String>,
 }
 
 impl Project {

@@ -1,7 +1,7 @@
 use argh::FromArgs;
 use cretaceous::{
     error::Error as CrError,
-    project::{Project, TargetType},
+    project::{Project, TargetType, UnresolvedProject},
     UnusedKeys,
 };
 use std::path::PathBuf;
@@ -33,7 +33,7 @@ fn main() {
 
             let mut source = err.source();
             while let Some(the_source) = source {
-                tracing::error!("{}", the_source);
+                tracing::error!("Because of: {}", the_source);
                 source = the_source.source();
             }
 
@@ -76,17 +76,19 @@ fn run() -> Result<(), CrError> {
     tracing::info!("Building project from {}", project_file.display());
 
     let file = std::fs::read_to_string(project_file.as_path())?;
-    let project: Project = toml::from_str(&file).map_err(|toml| CrError::ReadProject {
-        toml,
-        path: project_file.display().to_string(),
-    })?;
-    tracing::debug!("Project meta: {:#?}", project.project);
+    let parsed_project: UnresolvedProject =
+        toml::from_str(&file).map_err(|toml| CrError::ReadProject {
+            toml,
+            path: project_file.display().to_string(),
+        })?;
+    tracing::debug!("Project meta: {:#?}", parsed_project.project);
 
-    let unused = project.unused_keys();
+    let unused = parsed_project.unused_keys();
     if !unused.is_empty() {
         tracing::warn!("Unused keys: {:?}", unused);
     }
 
+    let project = parsed_project.resolve(project_dir)?;
     let compiler = cretaceous::default_compiler()?;
     tracing::debug!("Compiler: {:#?}", compiler);
 
@@ -97,24 +99,25 @@ fn run() -> Result<(), CrError> {
     };
     tracing::debug!("Targets: {:#?}", targets);
 
-    for (target_name, target) in targets {
-        for source in target.sources.iter() {
-            let mut include_paths = vec![format!("{}", project_dir.join(target_name).display())];
-            include_paths.extend(
-                target
-                    .needs
-                    .iter()
-                    .map(|need| project_dir.join(need))
-                    .map(|dir| format!("{}", dir.display())),
-            );
+    for (_, target) in targets {
+        tracing::info!("Compiling target {}", target.name);
 
-            compiler.compile(
-                project_dir,
-                &PathBuf::from(target_name).join(source),
-                &include_paths,
-                args.debug,
-                args.verbose,
-            )?;
+        for source in target.sources.iter() {
+            let mut include_paths = vec![target.path.as_path()];
+            for need in target.needs.iter() {
+                include_paths.push(
+                    project
+                        .target
+                        .get(need.as_str())
+                        .ok_or_else(|| {
+                            CrError::Bug(format!("Resolved project had unknown target"))
+                        })?
+                        .path
+                        .as_path(),
+                );
+            }
+
+            compiler.compile(source, &include_paths, args.debug, args.verbose)?;
         }
 
         for target_type in target.type_.iter() {
@@ -125,6 +128,10 @@ fn run() -> Result<(), CrError> {
 
                 TargetType::Dynamic => {
                     // haha
+                }
+
+                TargetType::Binary => {
+                    // hue
                 }
             }
         }
