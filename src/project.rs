@@ -65,7 +65,7 @@ pub struct ProjectMeta {
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum TargetType {
-    Static,
+    Archive,
     Dynamic,
     Binary,
 }
@@ -75,7 +75,7 @@ impl FromStr for TargetType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "static" => Ok(TargetType::Static),
+            "archive" => Ok(TargetType::Archive),
             "dynamic" => Ok(TargetType::Dynamic),
             "binary" => Ok(TargetType::Binary),
             _ => Err(format!("Unknown target type {:?}", s)),

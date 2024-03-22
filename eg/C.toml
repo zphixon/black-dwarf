@@ -4,7 +4,7 @@ name = "libtomato"
 version = "1"
 
 [target.grow]
-type = "static"
+type = "archive"
 headers = "grow.h"
 sources = [
     "seed.c",
@@ -13,7 +13,7 @@ sources = [
 ]
 
 [target.tomato]
-type = ["dynamic", "static"]
+type = ["dynamic", "archive"]
 needs = "grow"
 headers = "tomato.h"
 sources = [

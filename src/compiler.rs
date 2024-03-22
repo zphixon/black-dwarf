@@ -34,14 +34,21 @@ pub struct CompilerInner {
     pub compile_output_format: String,
 
     pub dynamic_link_format: Vec<String>,
-    pub dynamic_link_command: String,
+    pub binary_link_format: Vec<String>,
+    pub link_command: String,
     pub dynamic_link_flag: String,
-    pub dynamic_link_verbose_flag: String,
-    pub dynamic_link_debug_flag: String,
-    pub dynamic_link_library_path_option: String,
-    pub dynamic_link_output_option: String,
+    pub link_verbose_flag: String,
+    pub link_debug_flag: String,
+    pub link_library_path_option: String,
+    pub link_output_option: String,
     pub dynamic_link_output_format: String,
-    pub dynamic_link_option: String,
+    pub link_option: String,
+
+    pub archive_command: String,
+    pub archive_format: Vec<String>,
+    pub archive_output_format: String,
+    pub archive_verbose_flag: String,
+    pub archive_flag: String,
 }
 
 const PATH_SEPARATOR: &str = ",";
@@ -243,13 +250,13 @@ impl Compiler {
     fn resolve_link_command(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Command used to link a dynamic library"
-            "dynamic_linker", target_name, "command";
-            "dynamic_linker_command";
-            self.dynamic_link_command.as_str()
+            "linker", target_name, "command";
+            "linker_command";
+            self.link_command.as_str()
         )
     }
 
-    fn resolve_link_command_format(&self, target_name: &String) -> String {
+    fn resolve_dynamic_link_command_format(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Format string used to build the command which will link a dynamic library"
             "dynamic_linker", target_name, "command_format";
@@ -258,47 +265,57 @@ impl Compiler {
         )
     }
 
+    fn resolve_binary_link_command_format(&self, target_name: &String) -> String {
+        macros::env_var!(
+            doc "Format string used to build the command which will link a binary"
+            "linker", target_name, "command_format";
+            "linker_command_format";
+            &self.binary_link_format.join(" ")
+        )
+    }
+
+
     fn resolve_linker_verbose_flag(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Flag which will cause the linker to output verbose information"
-            "dynamic_linker", target_name, "verbose_flag";
-            "dynamic_linker_verbose_flag";
-            self.dynamic_link_verbose_flag.as_str()
+            "linker", target_name, "verbose_flag";
+            "linker_verbose_flag";
+            self.link_verbose_flag.as_str()
         )
     }
 
     fn resolve_linker_debug_flag(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Flag which will cause the linker to include debug symbols"
-            "dynamic_linker", target_name, "debug_flag";
-            "dynamic_linker_debug_flag";
-            self.dynamic_link_debug_flag.as_str()
+            "linker", target_name, "debug_flag";
+            "linker_debug_flag";
+            self.link_debug_flag.as_str()
         )
     }
 
     fn resolve_linker_link_path_option(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Option used to specify a path to search for library files"
-            "dynamic_linker", target_name, "library_path_option";
-            "dynamic_linker_library_path_option";
-            self.dynamic_link_library_path_option.as_str()
+            "linker", target_name, "library_path_option";
+            "linker_library_path_option";
+            self.link_library_path_option.as_str()
         )
     }
 
     fn resolve_linker_output_option(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Option used to specify the output location of a linked target"
-            "dynamic_linker", target_name, "output_option";
-            "dynamic_linker_output_option";
-            self.dynamic_link_output_option.as_str()
+            "linker", target_name, "output_option";
+            "linker_output_option";
+            self.link_output_option.as_str()
         )
     }
 
-    fn resolve_linker_output_format(&self, target_name: &String) -> String {
+    fn resolve_linker_dynamic_output_format(&self, target_name: &String) -> String {
         macros::env_var!(
-            doc "Format that a linked target should take"
-            "dynamic_linker", target_name, "output_format";
-            "dynamic_linker_output_format";
+            doc "Format that a linked dynamic target should take"
+            "linker", target_name, "dynamic_output_format";
+            "linker_dynamic_output_format";
             self.dynamic_link_output_format.as_str()
         )
     }
@@ -306,18 +323,18 @@ impl Compiler {
     fn resolve_linker_dynamic_link_flag(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Flag that will cause the linker to output a dynamic library"
-            "dynamic_linker", target_name, "link_flag";
-            "dynamic_linker_link_flag";
+            "linker_dynamic", target_name, "link_flag";
+            "linker_dynamic_link_flag";
             self.dynamic_link_flag.as_str()
         )
     }
 
-    fn resolve_linker_link_flag(&self, target_name: &String) -> String {
+    fn resolve_linker_link_option(&self, target_name: &String) -> String {
         macros::env_var!(
             doc "Option that will include a libary in a link command"
-            "dynamic_linker", target_name, "link_option";
-            "dynamic_linker_link_option";
-            self.dynamic_link_option.as_str()
+            "linker", target_name, "link_option";
+            "linker_link_option";
+            self.link_option.as_str()
         )
     }
 
@@ -328,8 +345,8 @@ impl Compiler {
     ) -> String {
         macros::env_var!(
             doc "Comma-separated list of paths to search for library files"
-            "dynamic_linker", target_name, "link_paths";
-            "dynamic_linker_link_paths";
+            "linker", target_name, "link_paths";
+            "linker_link_paths";
             &link_paths
                 .iter()
                 .map(|s| s.as_ref().display().to_string())
@@ -364,7 +381,7 @@ impl Compiler {
         Ok(())
     }
 
-    pub fn link_static(&self) -> Result<(), Error> {
+    pub fn create_archive(&self) -> Result<(), Error> {
         todo!()
     }
 
@@ -393,9 +410,9 @@ impl Compiler {
         let linker_debug_flag = self.resolve_linker_debug_flag(&target.name);
         let linker_dynamic_link_flag = self.resolve_linker_dynamic_link_flag(&target.name);
         let linker_output_option = self.resolve_linker_output_option(&target.name);
-        let linker_output_format = self.resolve_linker_output_format(&target.name);
+        let linker_dynamic_output_format = self.resolve_linker_dynamic_output_format(&target.name);
         let link_path_option = self.resolve_linker_link_path_option(&target.name);
-        let command_format = self.resolve_link_command_format(&target.name);
+        let command_format = self.resolve_dynamic_link_command_format(&target.name);
 
         let mut command = Vec::<String>::new();
         for part in command_format.split(" ") {
@@ -426,12 +443,89 @@ impl Compiler {
                 }
                 "%links" => {
                     for need in target.needs.iter() {
-                        command.push(self.resolve_linker_link_flag(need));
+                        command.push(self.resolve_linker_link_option(need));
                         command.push(need.clone());
                     }
                 }
                 "%output_option" => command.push(linker_output_option.clone()),
-                "%output" => command.push(linker_output_format.replace("%target", &target.name)),
+                "%output" => command.push(linker_dynamic_output_format.replace("%target", &target.name)),
+                _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
+                _ => command.push(part.into()),
+            }
+        }
+
+        tracing::info!("{:?}", command);
+        let status = subprocess::Exec::cmd(&command[0])
+            .args(&command[1..])
+            .join()?;
+        if !status.success() {
+            Err(Error::LinkFailed)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn link_binary(
+        &self,
+        project: &Project,
+        target: &Target,
+        verbose: bool,
+        debug: bool,
+    ) -> Result<(), Error> {
+        let mut link_paths = vec![target.path.as_path()];
+        for need in target.needs.iter() {
+            link_paths.push(
+                project
+                    .target
+                    .get(need.as_str())
+                    .ok_or_else(|| Error::Bug(format!("Resolved project had unknown target")))?
+                    .path
+                    .as_path(),
+            );
+        }
+        let link_paths = self.resolve_linker_paths(&target.name, &link_paths);
+
+        let linker_command = self.resolve_link_command(&target.name);
+        let linker_verbose_flag = self.resolve_linker_verbose_flag(&target.name);
+        let linker_debug_flag = self.resolve_linker_debug_flag(&target.name);
+        let linker_output_option = self.resolve_linker_output_option(&target.name);
+        let link_path_option = self.resolve_linker_link_path_option(&target.name);
+        let command_format = self.resolve_binary_link_command_format(&target.name);
+
+        let mut command = Vec::<String>::new();
+        for part in command_format.split(" ") {
+            match part {
+                "%command" => command.push(linker_command.clone()),
+                "%verbose_flag" if verbose => command.push(linker_verbose_flag.clone()),
+                "%verbose_flag" if !verbose => {}
+                "%debug_flag" if debug => command.push(linker_debug_flag.clone()),
+                "%debug_flag" if !debug => {}
+                "%objects" => {
+                    for source_path in target.sources.iter() {
+                        let short_source_path = self.short_source_path(project, source_path)?;
+                        command.push(
+                            self.compile_output_filename(&short_source_path, source_path)?
+                                .display()
+                                .to_string(),
+                        );
+                    }
+                }
+                "%link_paths" => {
+                    for path in link_paths.split(PATH_SEPARATOR) {
+                        if path != "" {
+                            command.push(link_path_option.clone());
+                            command.push(path.into());
+                        }
+                    }
+                }
+                "%links" => {
+                    for need in target.needs.iter() {
+                        command.push(self.resolve_linker_link_option(need));
+                        command.push(need.clone());
+                    }
+                }
+                "%output_option" => command.push(linker_output_option.clone()),
+                "%output" => command.push(target.name.clone()), // TODO: .exe
                 _ if part.starts_with("%") => return Err(Error::UnknownSubstitution(part.into())),
                 _ => command.push(part.into()),
             }

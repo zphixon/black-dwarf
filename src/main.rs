@@ -1,7 +1,7 @@
 use argh::FromArgs;
 use cretaceous::{
     error::Error as CrError,
-    project::{Project, TargetType, UnresolvedProject},
+    project::{TargetType, UnresolvedProject},
     UnusedKeys,
 };
 use std::path::PathBuf;
@@ -122,7 +122,7 @@ fn run() -> Result<(), CrError> {
 
         for target_type in target.type_.iter() {
             match target_type {
-                TargetType::Static => {
+                TargetType::Archive => {
                     // heehoo
                 }
 
@@ -131,7 +131,7 @@ fn run() -> Result<(), CrError> {
                 }
 
                 TargetType::Binary => {
-                    // hue
+                    compiler.link_binary(&project, target, args.verbose, args.debug)?;
                 }
             }
         }
